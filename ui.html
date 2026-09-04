@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      box-sizing: border-box;
+      background-color: #31333A; /* Default dark background for the bar */
+      overflow: hidden;
+    }
+    
+    /* Onboarding styles */
+    .header-onboarding {
+      background-color: #2F333D;
+      color: white;
+      padding: 14px 16px;
+      font-weight: 600;
+      font-size: 15px;
+      width: 100%;
+      box-sizing: border-box;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    .container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+      background-color: white; /* White background only for onboarding */
+      height: 100vh;
+    }
+    .github-logo {
+      width: 72px;
+      height: 72px;
+      margin-bottom: 24px;
+    }
+    .btn-connect {
+      background-color: #D9D9D9;
+      color: #000;
+      border: none;
+      border-radius: 24px;
+      padding: 10px 24px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+      width: 100%;
+      max-width: 220px;
+    }
+    .label-text {
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+    .input-pill {
+      background-color: #D9D9D9;
+      border: none;
+      border-radius: 24px;
+      padding: 12px 16px;
+      font-size: 14px;
+      width: 100%;
+      max-width: 260px;
+      box-sizing: border-box;
+      margin-bottom: 20px;
+      text-align: center;
+      outline: none;
+    }
+    .btn-submit {
+      background-color: #1E2128;
+      color: white;
+      border: none;
+      border-radius: 24px;
+      padding: 10px 32px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    /* Screen toggling */
+    .screen {
+      display: none;
+      width: 100%;
+      flex-direction: column;
+    }
+    .screen.active {
+      display: flex;
+    }
+    .screen-center {
+      align-items: center;
+    }
+
+    /* NEW TOPBAR PATTERN (used in minimized and maximized) */
+    .new-topbar {
+      display: flex;
+      background-color: #2C2D33; /* Lighter grey for the pill */
+      border-radius: 12px;
+      height: 56px;
+      align-items: center;
+      padding: 0 16px;
+      box-sizing: border-box;
+      width: 100%;
+      flex-shrink: 0;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .topbar-section {
+      display: flex;
+      align-items: center;
+      margin-right: 32px;
+    }
+    .topbar-icon {
+      margin-right: 10px;
+      opacity: 0.9;
+    }
+    .topbar-text-group {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .topbar-label {
+      color: #8E8E93;
+      font-size: 10px;
+      margin-bottom: 2px;
+      font-weight: 500;
+    }
+    .topbar-value {
+      color: #FFFFFF;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .topbar-spacer {
+      flex: 1;
+    }
+    .icon-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      border-radius: 4px;
+      opacity: 0.8;
+    }
+    .icon-btn:hover {
+      background-color: rgba(255, 255, 255, 0.1);
+      opacity: 1;
+    }
+    .btn-blue {
+      background-color: #0A66C2;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 20px;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+      margin-right: 12px;
+    }
+    .btn-blue:hover {
+      background-color: #095aa8;
+    }
+
+    /* Minimized Popover */
+    #screen-minimized {
+      height: 100vh;
+      background-color: #1E1E1E; /* Dark background for the window */
+      padding: 8px 12px; /* Creates the floating pill effect */
+      box-sizing: border-box;
+      position: relative;
+    }
+    .commit-popover {
+      display: none;
+      position: absolute;
+      top: 64px;
+      right: 50px; /* Align near the commit button */
+      background-color: #252526;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 16px;
+      width: 300px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .commit-popover.active {
+      display: block;
+    }
+
+    /* GitHub Desktop Style UI (Screen 3) */
+    #screen-3 {
+      background-color: #1E1E1E;
+      height: 100vh;
+    }
+    /* Main content */
+    .ghd-main {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 56px); /* 56px flush topbar */
+    }
+    .topbar-wrapper {
+      padding: 8px 12px;
+      background-color: #1E1E1E;
+    }
+    /* Sidebar */
+    .ghd-sidebar {
+      width: 260px;
+      background-color: #252526;
+      border-right: 1px solid #000;
+      display: flex;
+      flex-direction: column;
+    }
+    .ghd-tabs {
+      display: flex;
+      border-bottom: 1px solid #333;
+    }
+    .ghd-tab {
+      padding: 8px 16px;
+      font-size: 12px;
+      cursor: pointer;
+      border-bottom: 2px solid #007ACC;
+      color: #FFF;
+      font-weight: 500;
+    }
+    .ghd-file-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+    .ghd-file-item {
+      display: flex;
+      align-items: center;
+      padding: 4px 16px;
+      font-size: 13px;
+      color: #CCC;
+      background-color: #37373D;
+    }
+    .ghd-file-item input { margin-right: 8px; }
+    .ghd-commit-box {
+      padding: 16px;
+      background-color: #252526;
+      border-top: 1px solid #333;
+    }
+    .ghd-input {
+      width: 100%;
+      background-color: #1E1E1E;
+      border: 1px solid #444;
+      color: #CCC;
+      padding: 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-bottom: 8px;
+      box-sizing: border-box;
+      outline: none;
+    }
+    .ghd-input::placeholder { color: #888; }
+    .ghd-input:focus { border-color: #007ACC; }
+    .ghd-textarea {
+      height: 80px;
+      resize: none;
+    }
+    
+    /* Right pane (Diff view) */
+    .ghd-diff {
+      flex: 1;
+      background-color: #1E1E1E;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 12px;
+      color: #D4D4D4;
+      overflow-y: auto;
+    }
+    .diff-header {
+      padding: 8px 16px;
+      background-color: #252526;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+    }
+    .diff-content {
+      padding: 16px;
+      white-space: pre-wrap;
+    }
+    .diff-addition {
+      background-color: rgba(46, 160, 67, 0.15);
+      display: block;
+      padding: 2px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Onboarding Container (Screens 1, 2, 2.5) -->
+  <div id="onboarding-container" class="container">
+    <div class="header-onboarding">GitLayer</div>
+    
+    <!-- Screen 1: Connect -->
+    <div id="screen-1" class="screen screen-center active">
+      <svg class="github-logo" viewBox="0 0 98 96" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.868 0 48.854 0z" fill="#000"/>
+      </svg>
+      <button id="btn-goto-token" class="btn-connect">Connect your account</button>
+    </div>
+    
+    <!-- Screen 2: Token -->
+    <div id="screen-2" class="screen screen-center">
+      <svg class="github-logo" viewBox="0 0 98 96" xmlns="http://www.w3.org/2000/svg">
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.868 0 48.854 0z" fill="#000"/>
+      </svg>
+      <div class="label-text">Paste your Token</div>
+      <input type="password" id="pat" class="input-pill" />
+      <button id="btn-submit-token" class="btn-submit">Submit</button>
+      <div id="token-error" style="color: #D21C1C; display: none; font-size: 13px; margin-top: 12px; font-weight: 500;"></div>
+    </div>
+    
+    <!-- Screen 2.5: Repo Selection -->
+    <div id="screen-repo-select" class="screen screen-center">
+      <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">Repository Setup</div>
+      <p style="font-size: 12px; color: #666; margin-bottom: 24px;">Connect this Figma file to a GitHub repository.</p>
+      
+      <div style="width: 100%; text-align: left; margin-bottom: 20px;">
+        <label class="label-text" style="font-weight: 600;">Use Existing Repository</label>
+        <select id="existing-repos" class="input-pill" style="margin-bottom: 12px; padding-left: 12px; text-align: left; background-color: #f6f8fa; border: 1px solid #d0d7de;">
+          <option value="">Loading repos...</option>
+        </select>
+        <button id="btn-use-existing" class="btn-connect" style="width: 100%; max-width: 100%; background-color: #24292f; color: white;">Connect</button>
+      </div>
+      
+      <div style="font-size: 12px; color: #888; margin-bottom: 20px;">— OR —</div>
+      
+      <div style="width: 100%; text-align: left;">
+        <label class="label-text" style="font-weight: 600;">Create New Repository</label>
+        <input type="text" id="new-repo-name" class="input-pill" placeholder="e.g., figma-designs" style="margin-bottom: 12px; padding-left: 12px; text-align: left; background-color: #f6f8fa; border: 1px solid #d0d7de;" />
+        <button id="btn-create-repo" class="btn-connect" style="width: 100%; max-width: 100%; background-color: #2da44e; color: white;">Create & Connect</button>
+      </div>
+
+      <div id="repo-error" style="color: #D21C1C; display: none; font-size: 13px; margin-top: 16px; font-weight: 500; text-align: center;"></div>
+    </div>
+  </div>
+
+
+  <!-- REUSABLE SVG ICONS -->
+  <svg style="display:none;" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="icon-repo" viewBox="0 0 16 16" fill="white">
+      <path fill-rule="evenodd" d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 110-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z"></path>
+    </symbol>
+    <symbol id="icon-branch" viewBox="0 0 16 16" fill="white">
+      <path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"></path>
+    </symbol>
+    <symbol id="icon-expand" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+    </symbol>
+    <symbol id="icon-collapse" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+      <path d="M4 14h6v6M20 10h-6V4M10 14l-7 7M14 10l7-7"/>
+    </symbol>
+  </svg>
+
+
+  <!-- Screen Minimized (Floating Toolbar) -->
+  <div id="screen-minimized" class="screen">
+    <div class="new-topbar">
+      <div class="topbar-section">
+        <svg class="topbar-icon" width="16" height="16"><use href="#icon-repo"/></svg>
+        <div class="topbar-text-group">
+          <div class="topbar-label">Current Repository</div>
+          <div class="topbar-value" id="min-repo-name">Repo Name</div>
+        </div>
+      </div>
+      <div class="topbar-section">
+        <svg class="topbar-icon" width="16" height="16"><use href="#icon-branch"/></svg>
+        <div class="topbar-text-group">
+          <div class="topbar-label">Current Branch</div>
+          <div class="topbar-value">main</div>
+        </div>
+      </div>
+      <div class="topbar-spacer"></div>
+      
+      <button id="btn-min-toggle-commit" class="btn-blue">Commit</button>
+      <button id="btn-expand" class="icon-btn" title="Expand to Desktop UI"><svg width="20" height="20"><use href="#icon-expand"/></svg></button>
+    </div>
+
+    <!-- The Popover for committing -->
+    <div id="min-commit-popover" class="commit-popover">
+      <input type="text" id="min-commit-summary" class="ghd-input" placeholder="Summary (required)" />
+      <textarea id="min-commit-desc" class="ghd-input ghd-textarea" placeholder="Description"></textarea>
+      <button id="btn-min-push" class="btn-blue" style="width: 100%; margin: 0;">Push to main</button>
+      <div id="min-status-text" style="font-size: 12px; color: #aaa; margin-top: 8px; text-align: center;"></div>
+    </div>
+  </div>
+
+
+  <!-- Screen 3: GitHub Desktop Style Interface (Maximized) -->
+  <div id="screen-3" class="screen">
+    <!-- Top Bar matching the new pattern, but flush for maximized view -->
+    <div class="new-topbar" style="border-radius: 0; border-left: none; border-right: none; border-top: none; border-bottom: 1px solid #000; background-color: #252526; height: 56px;">
+      <div class="topbar-section">
+        <svg class="topbar-icon" width="16" height="16"><use href="#icon-repo"/></svg>
+        <div class="topbar-text-group">
+          <div class="topbar-label">Current Repository</div>
+          <div class="topbar-value" id="max-repo-name">Repo Name</div>
+        </div>
+      </div>
+      <div class="topbar-section">
+        <svg class="topbar-icon" width="16" height="16"><use href="#icon-branch"/></svg>
+        <div class="topbar-text-group">
+          <div class="topbar-label">Current Branch</div>
+          <div class="topbar-value">main</div>
+        </div>
+      </div>
+      <div class="topbar-spacer"></div>
+      
+      <div style="display: flex; align-items: center; margin-right: 16px;">
+        <div id="status-text" style="font-size: 12px; font-weight: normal; color: #aaa; margin-right: 16px;"></div>
+        <a href="#" id="btn-logout" style="color: #9E9E9E; font-size: 12px; text-decoration: none;">Sign out</a>
+      </div>
+      
+      <button id="btn-collapse" class="icon-btn" title="Minimize to Toolbar"><svg width="20" height="20"><use href="#icon-collapse"/></svg></button>
+    </div>
+
+    <!-- Main Content -->
+    <div class="ghd-main">
+      <div class="ghd-sidebar">
+        <div class="ghd-tabs">
+          <div class="ghd-tab">Changes</div>
+        </div>
+        <div class="ghd-file-list">
+          <div class="ghd-file-item">
+            <input type="checkbox" checked disabled />
+            <span>figma-snapshot.json</span>
+          </div>
+        </div>
+        <div class="ghd-commit-box">
+          <input type="text" id="commit-summary" class="ghd-input" placeholder="Summary (required)" />
+          <textarea id="commit-desc" class="ghd-input ghd-textarea" placeholder="Description"></textarea>
+          <button id="commit-btn" class="btn-blue" style="width: 100%; margin: 0;">Commit to main</button>
+        </div>
+      </div>
+      <div class="ghd-diff">
+        <div class="diff-header">
+          <span style="color: #569cd6; margin-right: 8px;">{ }</span>
+          <span>figma-snapshot.json</span>
+        </div>
+        <div class="diff-content" id="diff-preview">Loading preview...</div>
+      </div>
+    </div>
+  </div>
+
+
+  <script>
+    let currentPat = '';
+    let currentRepo = '';
+
+    function showScreen(id) {
+      document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+      
+      if (id === 'screen-minimized') {
+        document.getElementById('onboarding-container').style.display = 'none';
+        document.getElementById('screen-minimized').classList.add('active');
+        document.getElementById('min-repo-name').innerText = currentRepo;
+        
+        // Hide popover by default when switching to minimized
+        document.getElementById('min-commit-popover').classList.remove('active');
+        
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 72 } }, '*');
+      } 
+      else if (id === 'screen-3') {
+        document.getElementById('onboarding-container').style.display = 'none';
+        document.getElementById('screen-3').classList.add('active');
+        document.getElementById('max-repo-name').innerText = currentRepo;
+        
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 800, height: 600 } }, '*');
+        parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
+      } 
+      else {
+        document.getElementById('onboarding-container').style.display = 'flex';
+        document.getElementById(id).classList.add('active');
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 320, height: 420 } }, '*');
+      }
+    }
+
+    // --- Onboarding Logic ---
+    document.getElementById('btn-goto-token').onclick = () => {
+      window.open('https://github.com/settings/tokens/new?description=GitLayer+Figma+Plugin&scopes=repo', '_blank');
+      showScreen('screen-2');
+    };
+
+    async function fetchRepos() {
+      try {
+        const res = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
+          headers: { 'Authorization': `Bearer ${currentPat}` }
+        });
+        if (res.ok) {
+          const repos = await res.json();
+          const figmaRepos = repos.filter(repo => repo.topics && repo.topics.includes('figma-repo'));
+          const select = document.getElementById('existing-repos');
+          select.innerHTML = '';
+          figmaRepos.forEach(repo => {
+            const opt = document.createElement('option');
+            opt.value = repo.full_name;
+            opt.textContent = repo.full_name;
+            select.appendChild(opt);
+          });
+          if (figmaRepos.length === 0) {
+            select.innerHTML = '<option value="">No Figma repositories found</option>';
+          }
+        }
+      } catch (e) {
+        document.getElementById('existing-repos').innerHTML = '<option value="">Error loading repos</option>';
+      }
+    }
+
+    document.getElementById('btn-use-existing').onclick = () => {
+      const select = document.getElementById('existing-repos');
+      if (select.value) {
+        currentRepo = select.value;
+        parent.postMessage({ pluginMessage: { type: 'save-repo', repo: select.value } }, '*');
+        // Start in minimized mode by default after onboarding
+        showScreen('screen-minimized');
+      } else {
+        document.getElementById('repo-error').innerText = 'Please select a repository.';
+        document.getElementById('repo-error').style.display = 'block';
+      }
+    };
+
+    document.getElementById('btn-create-repo').onclick = async () => {
+      const name = document.getElementById('new-repo-name').value.trim();
+      const errorEl = document.getElementById('repo-error');
+      if (!name) {
+        errorEl.innerText = 'Repository name cannot be empty.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      const btn = document.getElementById('btn-create-repo');
+      btn.innerText = 'Creating...';
+      btn.disabled = true;
+      errorEl.style.display = 'none';
+
+      try {
+        const res = await fetch('https://api.github.com/user/repos', {
+          method: 'POST',
+          headers: { 
+            'Authorization': `Bearer ${currentPat}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ name: name, private: true })
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          const fullName = data.full_name;
+          
+          try {
+            await fetch(`https://api.github.com/repos/${fullName}/topics`, {
+              method: 'PUT',
+              headers: {
+                'Authorization': `Bearer ${currentPat}`,
+                'Content-Type': 'application/json',
+                'Accept': 'application/vnd.github.mercy-preview+json'
+              },
+              body: JSON.stringify({ names: ['figma-repo'] })
+            });
+          } catch (topicError) { }
+
+          currentRepo = fullName;
+          parent.postMessage({ pluginMessage: { type: 'save-repo', repo: fullName } }, '*');
+          showScreen('screen-minimized');
+        } else {
+          const errorData = await res.json();
+          errorEl.innerText = `Error: ${errorData.message}`;
+          errorEl.style.display = 'block';
+        }
+      } catch (e) {
+        errorEl.innerText = 'Network error creating repository.';
+        errorEl.style.display = 'block';
+      }
+      btn.innerText = 'Create & Connect';
+      btn.disabled = false;
+    };
+
+    document.getElementById('btn-submit-token').onclick = async () => {
+      const pat = document.getElementById('pat').value.trim();
+      const errorEl = document.getElementById('token-error');
+      if (!pat) {
+        errorEl.innerText = 'Token cannot be empty';
+        errorEl.style.display = 'block';
+        return;
+      }
+      const btn = document.getElementById('btn-submit-token');
+      btn.innerText = 'Verifying...';
+      btn.disabled = true;
+      errorEl.style.display = 'none';
+
+      try {
+        const res = await fetch('https://api.github.com/user', {
+          headers: { 'Authorization': `Bearer ${pat}` }
+        });
+        if (res.ok) {
+          currentPat = pat;
+          parent.postMessage({ pluginMessage: { type: 'save-pat', pat: currentPat } }, '*');
+          showScreen('screen-repo-select');
+          fetchRepos();
+        } else {
+          errorEl.innerText = 'Error: Bad credentials';
+          errorEl.style.display = 'block';
+        }
+      } catch (e) {
+        errorEl.innerText = 'Network error verifying token';
+        errorEl.style.display = 'block';
+      }
+      
+      btn.innerText = 'Submit';
+      btn.disabled = false;
+    };
+
+    document.getElementById('btn-logout').onclick = (e) => {
+      e.preventDefault();
+      currentPat = '';
+      currentRepo = '';
+      document.getElementById('pat').value = '';
+      parent.postMessage({ pluginMessage: { type: 'logout' } }, '*');
+      showScreen('screen-1');
+    };
+
+    // --- Expanding / Collapsing Logic ---
+    document.getElementById('btn-expand').onclick = () => {
+      showScreen('screen-3');
+    };
+    document.getElementById('btn-collapse').onclick = () => {
+      showScreen('screen-minimized');
+    };
+
+    // --- Minimized UI Logic ---
+    document.getElementById('btn-min-toggle-commit').onclick = () => {
+      const popover = document.getElementById('min-commit-popover');
+      if (popover.classList.contains('active')) {
+        popover.classList.remove('active');
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 72 } }, '*');
+      } else {
+        popover.classList.add('active');
+        // Expand window downwards to fit popover
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 280 } }, '*');
+      }
+    };
+
+    document.getElementById('btn-min-push').onclick = () => {
+      const summary = document.getElementById('min-commit-summary').value.trim();
+      const status = document.getElementById('min-status-text');
+      
+      if (!summary) {
+        status.innerText = 'Summary is required';
+        status.style.color = '#f14c4c';
+        return;
+      }
+      
+      status.innerText = 'Pushing...';
+      status.style.color = '#cccccc';
+      document.getElementById('btn-min-push').disabled = true;
+      parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, summary, source: 'min' } }, '*');
+    };
+
+
+    // --- Maximized UI Logic ---
+    document.getElementById('commit-btn').onclick = () => {
+      const summary = document.getElementById('commit-summary').value.trim();
+      const status = document.getElementById('status-text');
+      
+      if (!summary) {
+        status.innerText = 'Summary is required';
+        status.style.color = '#f14c4c';
+        return;
+      }
+      
+      status.innerText = 'Serializing...';
+      status.style.color = '#cccccc';
+      document.getElementById('commit-btn').disabled = true;
+      parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, summary, source: 'max' } }, '*');
+    };
+
+    // --- Message passing from plugin ---
+    onmessage = async (event) => {
+      const msg = event.data.pluginMessage;
+      
+      // Handle startup state
+      if (msg.type === 'init-state') {
+        if (msg.pat) {
+          currentPat = msg.pat;
+          if (msg.repo) {
+            currentRepo = msg.repo;
+            // Default to minimized view when opening an existing file
+            showScreen('screen-minimized');
+          } else {
+            showScreen('screen-repo-select');
+            fetchRepos();
+          }
+        } else {
+          showScreen('screen-1');
+        }
+      }
+      
+      // Handle live preview from Figma
+      if (msg.type === 'preview-payload') {
+        const previewEl = document.getElementById('diff-preview');
+        const jsonStr = JSON.stringify(msg.payload, null, 2);
+        const lines = jsonStr.split('\n').map(line => `<span class="diff-addition">+ ${line}</span>`).join('\n');
+        previewEl.innerHTML = lines;
+      }
+      
+      // Handle commit execution
+      if (msg.type === 'commit-payload') {
+        const isMin = msg.source === 'min';
+        const status = isMin ? document.getElementById('min-status-text') : document.getElementById('status-text');
+        status.innerText = 'Pushing to GitHub...';
+        
+        try {
+          const { pat, repo, payload, message } = msg;
+          const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+          const url = `https://api.github.com/repos/${repo}/contents/figma-snapshot.json`;
+          let sha = null;
+          
+          try {
+            const getRes = await fetch(url, { headers: { 'Authorization': `Bearer ${pat}` } });
+            if (getRes.ok) {
+              const getData = await getRes.json();
+              sha = getData.sha;
+            }
+          } catch (e) { }
+
+          const body = { message, content: contentBase64 };
+          if (sha) body.sha = sha;
+
+          const res = await fetch(url, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${pat}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/vnd.github.v3+json'
+            },
+            body: JSON.stringify(body)
+          });
+
+          if (res.ok) {
+            status.innerText = 'Commit successful! 🎉';
+            status.style.color = '#89d185'; // Success green
+            if (isMin) {
+              document.getElementById('min-commit-summary').value = '';
+              document.getElementById('min-commit-desc').value = '';
+              document.getElementById('btn-min-push').disabled = false;
+              // Auto collapse popover after successful commit in minimized view
+              setTimeout(() => {
+                document.getElementById('btn-min-toggle-commit').click();
+                status.innerText = '';
+              }, 1500);
+            } else {
+              document.getElementById('commit-summary').value = '';
+              document.getElementById('commit-desc').value = '';
+              document.getElementById('commit-btn').disabled = false;
+            }
+          } else {
+            const error = await res.json();
+            status.innerText = 'Error: ' + error.message;
+            status.style.color = '#f14c4c';
+            if(isMin) document.getElementById('btn-min-push').disabled = false;
+            else document.getElementById('commit-btn').disabled = false;
+          }
+        } catch (e) {
+          status.innerText = 'Network Error.';
+          status.style.color = '#f14c4c';
+          if(isMin) document.getElementById('btn-min-push').disabled = false;
+          else document.getElementById('commit-btn').disabled = false;
+        }
+      }
+    };
+  </script>
+</body>
+</html>
