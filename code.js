@@ -925,16 +925,16 @@ if (figma.editorType === 'figma') {
         });
     }
     let isRenderingCommitImage = false;
-    async function renderCommitToImage(doc) {
-        if (doc?.previewImage && typeof doc.previewImage === 'string') {
-            return doc.previewImage;
+    async function renderCommitToArtifacts(doc) {
+        if (doc?.previewPdf && typeof doc.previewPdf === 'string') {
+            return { dataUrl: doc.previewImage || null, pdfBase64: doc.previewPdf };
         }
         const pages = doc?.document?.children ?? [];
         if (pages.length === 0)
-            return null;
+            return { dataUrl: null, pdfBase64: null };
         const topNodes = (pages[0].children ?? []).filter((n) => n.visible !== false && n.type !== 'SLICE');
         if (topNodes.length === 0)
-            return null;
+            return { dataUrl: null, pdfBase64: null };
         isRenderingCommitImage = true;
         let tempFrame = null;
         try {
@@ -959,7 +959,7 @@ if (figma.editorType === 'figma') {
                 }
             }
             if (!isFinite(minX) || !isFinite(minY)) {
-                return null;
+                return { dataUrl: null, pdfBase64: null };
             }
             const pad = 40;
             for (const c of tempFrame.children) {
@@ -971,16 +971,36 @@ if (figma.editorType === 'figma') {
             const frameW = Math.max(100, Math.ceil(maxX - minX + pad * 2));
             const frameH = Math.max(100, Math.ceil(maxY - minY + pad * 2));
             tempFrame.resize(frameW, frameH);
-            const bytes = await tempFrame.exportAsync({
-                format: 'PNG',
-                constraint: { type: 'SCALE', value: 2 }
-            });
-            const base64 = figma.base64Encode(bytes);
-            return `data:image/png;base64,${base64}`;
+            // 1. Vector PDF export (Native C++ Figma vector exporter)
+            let pdfBase64 = null;
+            try {
+                const pdfBytes = await tempFrame.exportAsync({ format: 'PDF' });
+                if (pdfBytes && pdfBytes.length > 0) {
+                    pdfBase64 = figma.base64Encode(pdfBytes);
+                }
+            }
+            catch (pdfErr) {
+                console.warn('[GitLayer] PDF export failed', pdfErr);
+            }
+            // 2. 2x PNG export fallback
+            let dataUrl = null;
+            try {
+                const pngBytes = await tempFrame.exportAsync({
+                    format: 'PNG',
+                    constraint: { type: 'SCALE', value: 2 }
+                });
+                if (pngBytes && pngBytes.length > 0) {
+                    dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
+                }
+            }
+            catch (pngErr) {
+                console.warn('[GitLayer] PNG export failed', pngErr);
+            }
+            return { dataUrl, pdfBase64 };
         }
         catch (err) {
-            console.error('[GitLayer] Failed to render commit image', err);
-            return null;
+            console.error('[GitLayer] Failed to render commit artifacts', err);
+            return { dataUrl: null, pdfBase64: null };
         }
         finally {
             if (tempFrame) {
@@ -1073,6 +1093,15 @@ if (figma.editorType === 'figma') {
             catch (e) {
                 console.warn('[GitLayer] Could not export page previewImage', e);
             }
+            try {
+                const pagePdf = await figma.currentPage.exportAsync({ format: 'PDF' });
+                if (pagePdf && pagePdf.length > 0) {
+                    payload.previewPdf = figma.base64Encode(pagePdf);
+                }
+            }
+            catch (e) {
+                console.warn('[GitLayer] Could not export page previewPdf', e);
+            }
             figma.ui.postMessage({
                 type: 'commit-payload',
                 pat: msg.pat,
@@ -1103,20 +1132,22 @@ if (figma.editorType === 'figma') {
         else if (msg.type === 'dismiss-canvas-preview') {
             dismissCanvasPreview();
         }
-        else if (msg.type === 'render-commit-image') {
+        else if (msg.type === 'render-commit-image' || msg.type === 'render-commit-pdf') {
             try {
-                const dataUrl = await renderCommitToImage(msg.doc);
+                const { dataUrl, pdfBase64 } = await renderCommitToArtifacts(msg.doc);
                 figma.ui.postMessage({
                     type: 'history-rendered-image',
                     sha: msg.sha,
-                    dataUrl: dataUrl
+                    dataUrl: dataUrl,
+                    pdfBase64: pdfBase64
                 });
             }
             catch (err) {
                 figma.ui.postMessage({
                     type: 'history-rendered-image',
                     sha: msg.sha,
-                    dataUrl: null
+                    dataUrl: null,
+                    pdfBase64: null
                 });
             }
         }

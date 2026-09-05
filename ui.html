@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -874,6 +875,7 @@
           <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
             <div id="diff-header-history-actions" style="display: none; align-items: center; gap: 6px;">
               <button id="btn-preview-canvas" style="background: #238636; border: 1px solid rgba(240,246,252,0.1); color: #ffffff; font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500;" title="Render this historical commit on Figma canvas beside current design">👁️ View on Canvas</button>
+              <button id="btn-export-pdf" style="background: #21262d; border: 1px solid #30363d; color: #c9d1d9; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; display: none; align-items: center; gap: 4px;" title="Export vector PDF of this commit">📄 Export PDF</button>
               <button id="btn-dismiss-canvas" style="background: transparent; border: 1px solid #444; color: #8b949e; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; display: none;" title="Remove preview frame from canvas">✕ Dismiss</button>
               <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
             </div>
@@ -887,6 +889,7 @@
         <!-- Visual Diagram View (Default) -->
         <div id="diff-visual-container" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; overflow: hidden; background: #141518; position: relative; user-select: none;">
           <div id="diff-visual-stage" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; transform-origin: center center; will-change: transform; cursor: grab;">
+            <canvas id="diff-diagram-canvas" style="background: #1e1e1e; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); border: 1px solid #2d2e33; display: none; pointer-events: none;"></canvas>
             <img id="diff-diagram-img" draggable="false" style="max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); border: 1px solid #2d2e33; display: none; pointer-events: none; -webkit-user-drag: none;" />
             <div id="diff-diagram-svg" style="max-width: 100%; max-height: 480px; width: 100%; display: none; align-items: center; justify-content: center;"></div>
             <div id="diff-empty-state" style="color: #8b949e; font-size: 13px; text-align: center; pointer-events: none;">
@@ -1435,6 +1438,86 @@
     let selectedCommit = null;
     let selectedCommitDoc = null;
     const historyImageCache = new Map();
+    const historyPdfCache = new Map();
+    let currentPdfDoc = null;
+    let isRenderingPdf = false;
+    let workerBlobUrl = null;
+
+    async function ensurePdfWorker() {
+      if (workerBlobUrl) return workerBlobUrl;
+      try {
+        const resp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');
+        if (resp.ok) {
+          const text = await resp.text();
+          const blob = new Blob([text], { type: 'application/javascript' });
+          workerBlobUrl = URL.createObjectURL(blob);
+          return workerBlobUrl;
+        }
+      } catch (e) {
+        console.warn('[GitLayer] Worker fetch as blob failed, fallback to cdn url', e);
+      }
+      return 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    async function renderPdfToCanvas(pdfBase64, sha) {
+      if (typeof pdfjsLib === 'undefined') return false;
+      if (isRenderingPdf) return false;
+      isRenderingPdf = true;
+      try {
+        const workerUrl = await ensurePdfWorker();
+        if (workerUrl) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+        }
+        const binaryString = atob(pdfBase64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+
+        const loadingTask = pdfjsLib.getDocument({ data: bytes });
+        const pdfDoc = await loadingTask.promise;
+        currentPdfDoc = pdfDoc;
+        const page = await pdfDoc.getPage(1);
+
+        const canvas = document.getElementById('diff-diagram-canvas');
+        if (!canvas) return false;
+        const ctx = canvas.getContext('2d');
+
+        // High resolution scale (3.5x) for vector clarity at up to 400% zoom
+        const scale = 3.5;
+        const viewport = page.getViewport({ scale: scale });
+
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+        canvas.style.width = `${Math.round(viewport.width / scale)}px`;
+        canvas.style.height = `${Math.round(viewport.height / scale)}px`;
+
+        await page.render({
+          canvasContext: ctx,
+          viewport: viewport
+        }).promise;
+
+        canvas.style.display = 'block';
+        const img = document.getElementById('diff-diagram-img');
+        if (img) img.style.display = 'none';
+
+        return true;
+      } catch (err) {
+        console.warn('[GitLayer] PDF.js rendering error', err);
+        const canvas = document.getElementById('diff-diagram-canvas');
+        if (canvas) canvas.style.display = 'none';
+        if (sha) {
+          const cachedImg = historyImageCache.get(sha) || selectedCommitDoc?.previewImage;
+          const img = document.getElementById('diff-diagram-img');
+          if (cachedImg && cachedImg !== 'failed' && img) {
+            img.src = cachedImg;
+            img.style.display = 'block';
+          }
+        }
+        return false;
+      } finally {
+        isRenderingPdf = false;
+      }
+    }
 
     document.getElementById('btn-toggle-diagram').onclick = () => {
       currentViewMode = 'diagram';
@@ -1844,13 +1927,17 @@
     function updateRightPanelView() {
       updateViewModeUI();
 
+      const canvas = document.getElementById('diff-diagram-canvas');
       const img = document.getElementById('diff-diagram-img');
       const svg = document.getElementById('diff-diagram-svg');
       const empty = document.getElementById('diff-empty-state');
       const meta = document.getElementById('diff-diagram-meta');
       const codeBox = document.getElementById('diff-code-container');
+      const btnExportPdf = document.getElementById('btn-export-pdf');
 
       if (activeMainTab === 'changes') {
+        if (canvas) canvas.style.display = 'none';
+        if (btnExportPdf) btnExportPdf.style.display = 'none';
         document.getElementById('diff-header-title').innerText = 'Canvas Diagram Preview';
         document.getElementById('diff-header-history-actions').style.display = 'none';
 
@@ -1923,21 +2010,42 @@
         let rendered = false;
         if (selectedCommitDoc) {
           const topNodes = selectedCommitDoc?.document?.children?.[0]?.children || [];
+          const pdfBase64 = historyPdfCache.get(selectedCommit.sha) || selectedCommitDoc.previewPdf;
 
-          // 1. High-res 2x retina render from Figma engine (cached or embedded)
-          const cachedImg = historyImageCache.get(selectedCommit.sha) || selectedCommitDoc.previewImage;
-          if (cachedImg && cachedImg !== 'failed') {
-            img.src = cachedImg;
-            img.style.display = 'block';
+          if (btnExportPdf) {
+            btnExportPdf.style.display = (pdfBase64 && selectedCommit) ? 'inline-flex' : 'none';
+          }
+
+          // 1. Vector PDF rendered at high-resolution 3.5x scale on HTML5 Canvas
+          if (pdfBase64 && typeof pdfjsLib !== 'undefined') {
+            if (canvas) canvas.style.display = 'block';
+            img.style.display = 'none';
             svg.style.display = 'none';
             empty.style.display = 'none';
             meta.style.display = 'block';
-            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha} (Figma Engine)`;
+            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha} (Vector PDF)`;
+            renderPdfToCanvas(pdfBase64, selectedCommit.sha);
             rendered = true;
           }
 
-          // 2. Vector SVG if embedded in commit snapshot
+          // 2. High-res 2x retina render from Figma engine (cached or embedded fallback)
+          if (!rendered) {
+            if (canvas) canvas.style.display = 'none';
+            const cachedImg = historyImageCache.get(selectedCommit.sha) || selectedCommitDoc.previewImage;
+            if (cachedImg && cachedImg !== 'failed') {
+              img.src = cachedImg;
+              img.style.display = 'block';
+              svg.style.display = 'none';
+              empty.style.display = 'none';
+              meta.style.display = 'block';
+              meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha} (Figma Engine)`;
+              rendered = true;
+            }
+          }
+
+          // 3. Vector SVG if embedded in commit snapshot
           if (!rendered && selectedCommitDoc.previewSvg) {
+            if (canvas) canvas.style.display = 'none';
             svg.innerHTML = formatNativeSvg(selectedCommitDoc.previewSvg);
             svg.style.display = 'flex';
             img.style.display = 'none';
@@ -1947,8 +2055,9 @@
             rendered = true;
           }
 
-          // 3. Fallback thumbnails if available
+          // 4. Fallback thumbnails if available
           if (!rendered && selectedCommitDoc.thumbnails && selectedCommitDoc.thumbnails.length > 0) {
+            if (canvas) canvas.style.display = 'none';
             const svgContent = renderThumbnailsToSvg(selectedCommitDoc.thumbnails);
             if (svgContent) {
               svg.innerHTML = svgContent;
@@ -1962,8 +2071,9 @@
             }
           }
 
-          // 4. Request native C++ render from Figma engine for legacy snapshots without preview
+          // 5. Request native C++ render from Figma engine for legacy snapshots without preview
           if (!rendered && historyImageCache.get(selectedCommit.sha) !== 'failed' && topNodes.length > 0) {
+            if (canvas) canvas.style.display = 'none';
             img.style.display = 'none';
             svg.style.display = 'none';
             empty.style.display = 'block';
@@ -1971,7 +2081,7 @@
               <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
                 <div style="width: 22px; height: 22px; border: 2.5px solid #333; border-top-color: #2ea043; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
                 <div style="color: #c9d1d9; font-size: 12px; font-weight: 500;">Rendering snapshot with Figma engine...</div>
-                <div style="color: #8b949e; font-size: 11px;">Generating pixel-perfect high-resolution preview</div>
+                <div style="color: #8b949e; font-size: 11px;">Generating pixel-perfect vector & high-resolution preview</div>
               </div>
             `;
             meta.style.display = 'none';
@@ -1985,6 +2095,7 @@
             }, '*');
           } else if (!rendered && topNodes.length > 0) {
             // Render attempt failed: Provide fallback with "View on Canvas" button
+            if (canvas) canvas.style.display = 'none';
             img.style.display = 'none';
             svg.style.display = 'flex';
             svg.style.flexDirection = 'column';
@@ -2001,6 +2112,7 @@
               if (legacyBtn) legacyBtn.onclick = triggerCanvasPreview;
             }, 50);
           } else if (!rendered) {
+            if (canvas) canvas.style.display = 'none';
             img.style.display = 'none';
             svg.style.display = 'none';
             empty.style.display = 'block';
@@ -2013,6 +2125,8 @@
             updateCodeBox(selectedCommitDoc, false);
           }
         } else if (selectedCommit) {
+          if (canvas) canvas.style.display = 'none';
+          if (btnExportPdf) btnExportPdf.style.display = 'none';
           img.style.display = 'none';
           svg.style.display = 'none';
           empty.style.display = 'block';
@@ -2026,6 +2140,8 @@
           codeBox.innerHTML = '<span style="color: #8b949e;">Loading commit data...</span>';
           resetZoom();
         } else {
+          if (canvas) canvas.style.display = 'none';
+          if (btnExportPdf) btnExportPdf.style.display = 'none';
           img.style.display = 'none';
           svg.style.display = 'none';
           empty.style.display = 'block';
@@ -2058,6 +2174,39 @@
         btn.disabled = false;
       }
     };
+
+    // Export PDF button listener
+    const btnExportPdfEl = document.getElementById('btn-export-pdf');
+    if (btnExportPdfEl) {
+      btnExportPdfEl.onclick = () => {
+        if (!selectedCommit) return;
+        const pdfBase64 = historyPdfCache.get(selectedCommit.sha) || selectedCommitDoc?.previewPdf;
+        if (!pdfBase64) {
+          alert('Vector PDF is not available for this commit.');
+          return;
+        }
+        try {
+          const binaryString = atob(pdfBase64);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+          const blob = new Blob([bytes], { type: 'application/pdf' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          const shortSha = selectedCommit.sha.substring(0, 7);
+          a.download = `GitLayer-${shortSha}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }, 200);
+        } catch (e) {
+          alert('Failed to export PDF: ' + e.message);
+        }
+      };
+    }
 
     // Tab Listeners (Changes vs History)
     document.getElementById('sidebar-tab-changes').onclick = () => {
@@ -2560,12 +2709,15 @@
         }
       }
 
-      // High-resolution image rendered by Figma engine for historical commit
+      // High-resolution image & vector PDF rendered by Figma engine for historical commit
       if (msg.type === 'history-rendered-image') {
         if (msg.dataUrl) {
           historyImageCache.set(msg.sha, msg.dataUrl);
         } else {
           historyImageCache.set(msg.sha, 'failed');
+        }
+        if (msg.pdfBase64) {
+          historyPdfCache.set(msg.sha, msg.pdfBase64);
         }
         if (activeMainTab === 'history' && selectedCommit && selectedCommit.sha === msg.sha) {
           updateRightPanelView();
