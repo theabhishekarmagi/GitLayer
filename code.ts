@@ -316,16 +316,19 @@ if (figma.editorType === 'figma') {
       }
 
       let dataUrl: string | null = null;
-      try {
-        const pngBytes = await tempFrame.exportAsync({
-          format: 'PNG',
-          constraint: { type: 'SCALE', value: 2 }
-        });
-        if (pngBytes && pngBytes.length > 0) {
-          dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
+      // Only invoke Figma WebGPU PNG rasterizer if PDF export failed
+      if (!pdfBase64) {
+        try {
+          const pngBytes = await tempFrame.exportAsync({
+            format: 'PNG',
+            constraint: { type: 'SCALE', value: 2 }
+          });
+          if (pngBytes && pngBytes.length > 0) {
+            dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
+          }
+        } catch (pngErr) {
+          console.warn('[GitLayer] Canvas PNG export failed', pngErr);
         }
-      } catch (pngErr) {
-        console.warn('[GitLayer] Canvas PNG export failed', pngErr);
       }
 
       return { pdfBase64, dataUrl };
@@ -413,7 +416,7 @@ if (figma.editorType === 'figma') {
     try {
       const payload = serializeCurrentPage();
       const { pdfBase64, dataUrl } = await exportActiveCanvasArtifacts();
-      const thumbnails = await generateVisualPreview();
+      const thumbnails = pdfBase64 ? null : await generateVisualPreview();
       figma.ui.postMessage({
         type: 'preview-payload',
         payload: payload,
@@ -981,18 +984,20 @@ if (figma.editorType === 'figma') {
         console.warn('[GitLayer] PDF export failed', pdfErr);
       }
 
-      // 2. 2x PNG export fallback
+      // 2. 2x PNG export fallback (only if PDF export failed)
       let dataUrl: string | null = null;
-      try {
-        const pngBytes = await tempFrame.exportAsync({
-          format: 'PNG',
-          constraint: { type: 'SCALE', value: 2 }
-        });
-        if (pngBytes && pngBytes.length > 0) {
-          dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
+      if (!pdfBase64) {
+        try {
+          const pngBytes = await tempFrame.exportAsync({
+            format: 'PNG',
+            constraint: { type: 'SCALE', value: 2 }
+          });
+          if (pngBytes && pngBytes.length > 0) {
+            dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
+          }
+        } catch (pngErr) {
+          console.warn('[GitLayer] PNG export failed', pngErr);
         }
-      } catch (pngErr) {
-        console.warn('[GitLayer] PNG export failed', pngErr);
       }
 
       return { dataUrl, pdfBase64 };
@@ -1068,9 +1073,11 @@ if (figma.editorType === 'figma') {
       if (dataUrl) {
         (payload as any).previewImage = dataUrl;
       }
-      const thumbnails = await generateVisualPreview();
-      if (thumbnails) {
-        (payload as any).thumbnails = thumbnails;
+      if (!pdfBase64) {
+        const thumbnails = await generateVisualPreview();
+        if (thumbnails) {
+          (payload as any).thumbnails = thumbnails;
+        }
       }
       figma.ui.postMessage({
         type: 'commit-payload',

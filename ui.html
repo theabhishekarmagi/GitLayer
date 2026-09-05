@@ -1442,6 +1442,20 @@
     const historyPdfCache = new Map();
     let currentPdfDoc = null;
     let isRenderingPdf = false;
+    // Silence noisy PDF.js font name fallback warnings on main thread
+    (function() {
+      if (typeof window !== 'undefined' && window.console && window.console.warn) {
+        const origWarn = window.console.warn;
+        window.console.warn = function(...args) {
+          const msg = typeof args[0] === 'string' ? args[0] : '';
+          if (msg.includes('loadFont') || msg.includes('invalid font name') || msg.includes('translateFont failed') || msg.includes('Error during font loading')) {
+            return;
+          }
+          origWarn.apply(window.console, args);
+        };
+      }
+    })();
+
     let workerBlobUrl = null;
 
     async function ensurePdfWorker() {
@@ -1449,7 +1463,19 @@
       try {
         const resp = await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');
         if (resp.ok) {
-          const text = await resp.text();
+          let text = await resp.text();
+          // Inject console.warn filter in web worker scope before worker executes
+          const workerFilter = `
+            if (typeof self !== 'undefined' && self.console && self.console.warn) {
+              const _w = self.console.warn;
+              self.console.warn = function(...args) {
+                const s = typeof args[0] === 'string' ? args[0] : '';
+                if (s.includes('loadFont') || s.includes('invalid font name') || s.includes('translateFont failed') || s.includes('Error during font loading')) return;
+                _w.apply(self.console, args);
+              };
+            }
+          `;
+          text = workerFilter + '\n' + text;
           const blob = new Blob([text], { type: 'application/javascript' });
           workerBlobUrl = URL.createObjectURL(blob);
           return workerBlobUrl;
@@ -1465,6 +1491,9 @@
       if (isRenderingPdf) return false;
       isRenderingPdf = true;
       try {
+        if (typeof pdfjsLib.verbosity !== 'undefined') {
+          pdfjsLib.verbosity = 0;
+        }
         const workerUrl = await ensurePdfWorker();
         if (workerUrl) {
           pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -1474,14 +1503,18 @@
         const bytes = new Uint8Array(len);
         for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
 
-        const loadingTask = pdfjsLib.getDocument({ data: bytes });
+        const loadingTask = pdfjsLib.getDocument({
+          data: bytes,
+          verbosity: 0,
+          stopAtErrors: false
+        });
         const pdfDoc = await loadingTask.promise;
         currentPdfDoc = pdfDoc;
         const page = await pdfDoc.getPage(1);
 
         const canvas = document.getElementById('diff-diagram-canvas');
         if (!canvas) return false;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         // High resolution scale (3.5x) for vector clarity at up to 400% zoom
         const scale = 3.5;
