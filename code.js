@@ -164,7 +164,8 @@ if (figma.editorType === 'figma') {
                 textAlignHorizontal: tn.textAlignHorizontal,
                 textAlignVertical: tn.textAlignVertical,
                 letterSpacing: tn.letterSpacing !== figma.mixed && tn.letterSpacing ? tn.letterSpacing.value : 0,
-                lineHeightPx: tn.lineHeight !== figma.mixed && tn.lineHeight && tn.lineHeight.unit === 'PIXELS' ? tn.lineHeight.value : undefined
+                lineHeightPx: tn.lineHeight !== figma.mixed && tn.lineHeight ? (tn.lineHeight.unit === 'PIXELS' ? tn.lineHeight.value :
+                    tn.lineHeight.unit === 'PERCENT' ? fontSize * (tn.lineHeight.value / 100) : undefined) : undefined
             };
         }
         // Geometry extras
@@ -181,6 +182,20 @@ if (figma.editorType === 'figma') {
         if (node.type === 'VECTOR') {
             try {
                 data.vectorNetwork = node.vectorNetwork;
+            }
+            catch { }
+            try {
+                if ('vectorPaths' in node) {
+                    data.vectorPaths = node.vectorPaths;
+                }
+            }
+            catch { }
+        }
+        if (node.type === 'BOOLEAN_OPERATION') {
+            try {
+                if ('vectorPaths' in node) {
+                    data.vectorPaths = node.vectorPaths;
+                }
             }
             catch { }
         }
@@ -212,23 +227,40 @@ if (figma.editorType === 'figma') {
         const children = page.children;
         if (!children || children.length === 0)
             return null;
-        // Filter to visible top-level nodes (up to 30 nodes)
-        const exportTargets = children.filter(c => c.visible !== false).slice(0, 30);
+        // Filter to visible top-level nodes (up to 50 nodes)
+        const exportTargets = children.filter(c => c.visible !== false).slice(0, 50);
         if (exportTargets.length === 0)
             return null;
         try {
-            const thumbnails = await Promise.all(exportTargets.map(async (child) => {
+            const items = await Promise.all(exportTargets.map(async (child) => {
                 if (!('x' in child && 'y' in child && 'width' in child && 'height' in child)) {
                     return null;
                 }
                 if (child.width <= 0 || child.height <= 0)
                     return null;
+                // Attempt native vector SVG export directly from Figma C++ engine
                 try {
-                    const maxDim = Math.max(child.width, child.height);
-                    const scale = maxDim > 800 ? 800 / maxDim : 1;
+                    const svgString = await child.exportAsync({ format: 'SVG_STRING' });
+                    if (svgString && svgString.length > 0) {
+                        return {
+                            id: child.id,
+                            name: child.name,
+                            x: child.x,
+                            y: child.y,
+                            width: child.width,
+                            height: child.height,
+                            svg: svgString
+                        };
+                    }
+                }
+                catch (svgErr) {
+                    // If SVG export fails for this specific node, fall back to high-res PNG
+                }
+                // Raster fallback: 2x high-resolution PNG
+                try {
                     const bytes = await child.exportAsync({
                         format: 'PNG',
-                        constraint: { type: 'SCALE', value: Math.max(0.05, Math.min(1, scale)) }
+                        constraint: { type: 'SCALE', value: 2 }
                     });
                     const base64 = figma.base64Encode(bytes);
                     return {
@@ -241,15 +273,15 @@ if (figma.editorType === 'figma') {
                         dataUrl: `data:image/png;base64,${base64}`
                     };
                 }
-                catch (e) {
+                catch {
                     return null;
                 }
             }));
-            const valid = thumbnails.filter(Boolean);
+            const valid = items.filter(Boolean);
             return valid.length > 0 ? valid : null;
         }
         catch (e) {
-            console.error('[GitLayer] Failed to export visual thumbnails', e);
+            console.error('[GitLayer] Failed to export visual preview', e);
             return null;
         }
     }
@@ -570,11 +602,18 @@ if (figma.editorType === 'figma') {
                     const v = figma.createVector();
                     parent.appendChild(v);
                     applyCommonProps(v, data);
-                    if (data.vectorNetwork)
+                    if (data.vectorPaths) {
+                        try {
+                            v.vectorPaths = data.vectorPaths;
+                        }
+                        catch { }
+                    }
+                    else if (data.vectorNetwork) {
                         try {
                             v.vectorNetwork = data.vectorNetwork;
                         }
                         catch { }
+                    }
                     return v;
                 }
                 case 'BOOLEAN_OPERATION': {
