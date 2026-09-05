@@ -1274,7 +1274,7 @@
     // Fetch and render commit history
     async function fetchCommitHistory() {
       const list = document.getElementById('history-list');
-      list.innerHTML = '<div style="padding: 32px 16px; text-align: center; color: #8b949e; font-size: 13px;">Loading commit history...</div>';
+      list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">Loading commit history...</div>';
       
       if (!currentRepo || !currentPat) {
         list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">No repository connected.</div>';
@@ -1282,7 +1282,7 @@
       }
       
       try {
-        const res = await fetch(`https://api.github.com/repos/${currentRepo}/commits?sha=${currentBranch}&per_page=30`, {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/commits?sha=${currentBranch}&per_page=50`, {
           headers: {
             'Authorization': `Bearer ${currentPat}`,
             'Accept': 'application/vnd.github.v3+json'
@@ -1303,25 +1303,50 @@
         }
         
         list.innerHTML = '';
+
+        // "No Branches to Compare" button at top
+        const compareBtn = document.createElement('div');
+        compareBtn.style.cssText = 'padding: 8px 12px; border-bottom: 1px solid #1E1E1E;';
+        compareBtn.innerHTML = `
+          <button style="width: 100%; background: transparent; border: 1px solid #444; border-radius: 4px; color: #8b949e; padding: 5px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; justify-content: center;">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+            No Branches to Compare
+          </button>
+        `;
+        list.appendChild(compareBtn);
+
         commits.forEach(commit => {
           const date = new Date(commit.commit.author.date);
-          const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-          const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-          const sha = commit.sha.substring(0, 7);
-          const message = commit.commit.message.split('\n')[0]; // First line only
-          const author = commit.commit.author.name;
-          const avatarUrl = commit.author?.avatar_url || '';
+          const now = new Date();
+          const diffMs = now - date;
+          const diffMins = Math.floor(diffMs / 60000);
+          const diffHours = Math.floor(diffMs / 3600000);
+          const diffDays = Math.floor(diffMs / 86400000);
           
+          let relativeTime;
+          if (diffMins < 1) relativeTime = 'just now';
+          else if (diffMins < 60) relativeTime = `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+          else if (diffHours < 24) relativeTime = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+          else if (diffDays < 30) relativeTime = `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+          else relativeTime = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+          const message = commit.commit.message.split('\n')[0];
+          const author = commit.commit.author.name.toUpperCase();
+          const avatarUrl = commit.author?.avatar_url;
+          
+          const avatarHtml = avatarUrl
+            ? `<img src="${avatarUrl}" width="16" height="16" style="border-radius: 50%; flex-shrink: 0;" />`
+            : `<div style="width: 16px; height: 16px; border-radius: 50%; background: #444; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; color: #aaa; flex-shrink: 0;">${(commit.commit.author.name || '?')[0].toUpperCase()}</div>`;
+
           const item = document.createElement('div');
           item.className = 'history-item';
           item.innerHTML = `
             <div class="history-item-title" title="${message}">${message}</div>
-            <div class="history-item-meta">
-              ${avatarUrl ? `<img src="${avatarUrl}" width="14" height="14" style="border-radius: 50%;" />` : ''}
-              <span>${author}</span>
-              <span>•</span>
-              <span>${dateStr} at ${timeStr}</span>
-              <span style="margin-left: auto;" class="history-item-sha">${sha}</span>
+            <div class="history-item-meta" style="margin-top: 4px;">
+              ${avatarHtml}
+              <span style="font-weight: 500;">${author}</span>
+              <span style="color: #555;">·</span>
+              <span>${relativeTime}</span>
             </div>
           `;
           item.onclick = () => {
