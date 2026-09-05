@@ -1331,12 +1331,18 @@
           else relativeTime = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
           const message = commit.commit.message.split('\n')[0];
-          const author = commit.commit.author.name.toUpperCase();
-          const avatarUrl = commit.author?.avatar_url;
-          
-          const avatarHtml = avatarUrl
-            ? `<img src="${avatarUrl}" width="16" height="16" style="border-radius: 50%; flex-shrink: 0;" />`
-            : `<div style="width: 16px; height: 16px; border-radius: 50%; background: #444; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; color: #aaa; flex-shrink: 0;">${(commit.commit.author.name || '?')[0].toUpperCase()}</div>`;
+          const authorName = commit.commit.author.name || '?';
+          const author = authorName.toUpperCase();
+
+          // Generate a deterministic color from the author name
+          let hash = 0;
+          for (let i = 0; i < authorName.length; i++) hash = authorName.charCodeAt(i) + ((hash << 5) - hash);
+          const hue = Math.abs(hash) % 360;
+          const avatarBg = `hsl(${hue}, 45%, 35%)`;
+          const initials = authorName.split(' ').slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('');
+          const avatarSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="8" fill="${avatarBg}"/><text x="8" y="11.5" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="600" fill="white">${initials}</text></svg>`;
+          const avatarDataUrl = `data:image/svg+xml,${encodeURIComponent(avatarSvg)}`;
+          const avatarHtml = `<img src="${avatarDataUrl}" width="16" height="16" style="border-radius: 50%; flex-shrink: 0;" />`;
 
           const item = document.createElement('div');
           item.className = 'history-item';
