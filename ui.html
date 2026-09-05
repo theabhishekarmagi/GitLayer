@@ -295,6 +295,41 @@
       border-radius: 3px;
       font-size: 11px;
     }
+    .history-item.selected {
+      background: rgba(47, 129, 247, 0.15) !important;
+      border-left: 3px solid #2f81f7;
+    }
+    .history-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .btn-item-import {
+      background: #1f6feb;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+      transition: background 0.15s, transform 0.05s;
+    }
+    .btn-item-import:hover {
+      background: #388bfd;
+    }
+    .btn-item-import:active {
+      transform: scale(0.96);
+    }
+    .btn-item-import:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .ghd-input {
       width: 100%;
       background-color: #1E1E1E;
@@ -1303,6 +1338,13 @@
       document.getElementById('sidebar-tab-history').classList.remove('active');
       document.getElementById('tab-content-changes').style.display = 'flex';
       document.getElementById('tab-content-history').style.display = 'none';
+
+      // Restore Changes diff header and live preview
+      const diffHeader = document.querySelector('.diff-header');
+      if (diffHeader) {
+        diffHeader.innerHTML = '<span style="color: #569cd6; margin-right: 8px;">{ }</span><span>figma-snapshot.json</span>';
+      }
+      parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
     };
 
     document.getElementById('sidebar-tab-history').onclick = () => {
@@ -1312,6 +1354,11 @@
       document.getElementById('tab-content-history').style.display = 'flex';
       fetchCommitHistory();
     };
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
 
     // Fetch and render commit history
     async function fetchCommitHistory() {
@@ -1357,7 +1404,7 @@
         `;
         list.appendChild(compareBtn);
 
-        commits.forEach(commit => {
+        commits.forEach((commit, idx) => {
           const date = new Date(commit.commit.author.date);
           const now = new Date();
           const diffMs = now - date;
@@ -1375,25 +1422,176 @@
           const message = commit.commit.message.split('\n')[0];
           const authorName = commit.commit.author.name || '?';
           const author = authorName.toUpperCase();
+          const shortSha = commit.sha.substring(0, 7);
 
           const item = document.createElement('div');
           item.className = 'history-item';
           item.innerHTML = `
-            <div class="history-item-title" title="${message}">${message}</div>
-            <div class="history-item-meta" style="margin-top: 4px;">
-              <span style="font-weight: 500;">${author}</span>
-              <span style="color: #555;">·</span>
-              <span>${relativeTime}</span>
+            <div class="history-item-row">
+              <div style="flex: 1; min-width: 0;">
+                <div class="history-item-title" title="${escapeHtml(message)}">${escapeHtml(message)}</div>
+                <div class="history-item-meta" style="margin-top: 4px;">
+                  <span class="history-item-sha">${shortSha}</span>
+                  <span style="font-weight: 500;">${escapeHtml(author)}</span>
+                  <span style="color: #555;">·</span>
+                  <span>${relativeTime}</span>
+                </div>
+              </div>
+              <button class="btn-item-import" title="Import this version beside current canvas without removing anything">+ Import</button>
             </div>
           `;
-          item.onclick = () => {
-            window.open(`https://github.com/${currentRepo}/commit/${commit.sha}`, '_blank');
+
+          const importBtn = item.querySelector('.btn-item-import');
+          importBtn.onclick = (e) => {
+            e.stopPropagation();
+            importCommitToCanvas(commit, importBtn);
           };
+
+          item.onclick = () => {
+            document.querySelectorAll('.history-item').forEach(i => i.classList.remove('selected'));
+            item.classList.add('selected');
+            selectHistoryCommit(commit);
+          };
+
           list.appendChild(item);
+
+          // Auto-select first commit
+          if (idx === 0) {
+            item.classList.add('selected');
+            selectHistoryCommit(commit);
+          }
         });
         
       } catch (e) {
         list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">Network error: ${e.message}</div>`;
+      }
+    }
+
+    // Select and inspect commit in the right pane
+    function selectHistoryCommit(commit) {
+      const shortSha = commit.sha.substring(0, 7);
+      const message = commit.commit.message.split('\n')[0];
+
+      const diffHeader = document.querySelector('.diff-header');
+      if (diffHeader) {
+        diffHeader.innerHTML = `
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+            <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; max-width: 55%;">
+              <span style="color: #569cd6; font-family: monospace; font-size: 11px;">${shortSha}</span>
+              <span style="font-weight: 500; color: #e6edf3; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(message)}">${escapeHtml(message)}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+              <button id="btn-detail-import" class="btn-item-import" style="padding: 4px 10px; font-size: 11px;" title="Import this version side-by-side on canvas without altering your current design">+ Import to Canvas</button>
+              <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
+              <a href="https://github.com/${currentRepo}/commit/${commit.sha}" target="_blank" style="color: #58a6ff; font-size: 11px; text-decoration: none; margin-left: 2px;">View ↗</a>
+            </div>
+          </div>
+        `;
+
+        const detailImport = document.getElementById('btn-detail-import');
+        if (detailImport) {
+          detailImport.onclick = () => importCommitToCanvas(commit, detailImport);
+        }
+
+        const detailRollback = document.getElementById('btn-detail-rollback');
+        if (detailRollback) {
+          detailRollback.onclick = async () => {
+            if (!confirm(`Rollback canvas to "${message}" (${shortSha})?\n\nThis will REPLACE current canvas content with this historical version.`)) return;
+            detailRollback.innerText = 'Rolling back...';
+            detailRollback.disabled = true;
+            try {
+              const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${commit.sha}`;
+              const res = await fetch(url, { headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' } });
+              if (!res.ok) throw new Error('No design snapshot found in this commit.');
+              const data = await res.json();
+              const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
+              const doc = JSON.parse(jsonStr);
+              parent.postMessage({ pluginMessage: { type: 'pull-from-github', doc } }, '*');
+            } catch (e) {
+              alert('Rollback failed: ' + e.message);
+              detailRollback.innerText = '↺ Rollback';
+              detailRollback.disabled = false;
+            }
+          };
+        }
+      }
+
+      loadCommitPreview(commit);
+    }
+
+    // Load preview of a specific commit snapshot
+    async function loadCommitPreview(commit) {
+      const previewEl = document.getElementById('diff-preview');
+      if (!previewEl) return;
+      previewEl.innerHTML = '<span style="color: #8b949e;">Loading commit snapshot...</span>';
+
+      try {
+        const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${commit.sha}`;
+        const res = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' }
+        });
+        if (!res.ok) {
+          previewEl.innerHTML = '<span style="color: #8b949e;">(No design snapshot was stored in this commit)</span>';
+          return;
+        }
+        const data = await res.json();
+        const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
+        const formatted = JSON.stringify(JSON.parse(jsonStr), null, 2);
+        const lines = formatted.split('\n').map(l => `<span style="color: #9cdcfe;">${escapeHtml(l)}</span>`).join('\n');
+        previewEl.innerHTML = lines;
+      } catch (e) {
+        previewEl.innerHTML = `<span style="color: #f85149;">Failed to load preview: ${escapeHtml(e.message)}</span>`;
+      }
+    }
+
+    // Pull historical version and import beside existing canvas nodes
+    async function importCommitToCanvas(commit, btn) {
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Importing...';
+      }
+      const status = document.getElementById('status-text');
+      status.innerText = `Fetching commit ${commit.sha.substring(0, 7)}...`;
+      status.style.color = '#aaa';
+
+      try {
+        const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${commit.sha}`;
+        const res = await fetch(url, {
+          headers: {
+            'Authorization': `Bearer ${currentPat}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message === 'Not Found' ? 'No design snapshot in this commit.' : (err.message || 'Failed to fetch commit snapshot'));
+        }
+
+        const data = await res.json();
+        const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
+        const doc = JSON.parse(jsonStr);
+
+        status.innerText = 'Placing historical version beside current design...';
+
+        parent.postMessage({
+          pluginMessage: {
+            type: 'import-commit-to-canvas',
+            doc: doc,
+            commit: {
+              sha: commit.sha,
+              message: commit.commit.message
+            }
+          }
+        }, '*');
+
+      } catch (err) {
+        status.innerText = '❌ Import failed: ' + err.message;
+        status.style.color = '#f14c4c';
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = '+ Import';
+        }
       }
     }
 
@@ -1649,6 +1847,40 @@
         if (status) { status.innerText = '❌ Pull failed: ' + msg.message; status.style.color = '#f14c4c'; }
         const pullBtn = document.getElementById('btn-pull');
         if (pullBtn) { pullBtn.disabled = false; pullBtn.innerText = '↓ Pull'; }
+      }
+
+      // Import historical version side-by-side
+      if (msg.type === 'import-progress') {
+        const status = document.getElementById('status-text');
+        if (status) { status.innerText = msg.message; status.style.color = '#aaa'; }
+      }
+
+      if (msg.type === 'import-success') {
+        const status = document.getElementById('status-text');
+        if (status) {
+          status.innerText = `✅ Imported "${msg.title} (${msg.sha})" beside canvas!`;
+          status.style.color = '#89d185';
+        }
+        document.querySelectorAll('.btn-item-import').forEach(b => {
+          b.disabled = false;
+          b.innerText = '+ Import';
+        });
+        const detailBtn = document.getElementById('btn-detail-import');
+        if (detailBtn) { detailBtn.disabled = false; detailBtn.innerText = '+ Import to Canvas'; }
+      }
+
+      if (msg.type === 'import-error') {
+        const status = document.getElementById('status-text');
+        if (status) {
+          status.innerText = '❌ ' + msg.message;
+          status.style.color = '#f14c4c';
+        }
+        document.querySelectorAll('.btn-item-import').forEach(b => {
+          b.disabled = false;
+          b.innerText = '+ Import';
+        });
+        const detailBtn = document.getElementById('btn-detail-import');
+        if (detailBtn) { detailBtn.disabled = false; detailBtn.innerText = '+ Import to Canvas'; }
       }
     };
   </script>

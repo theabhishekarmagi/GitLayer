@@ -521,6 +521,92 @@ if (figma.editorType === 'figma') {
     figma.ui.postMessage({ type: 'pull-success', count: restored });
   }
 
+  async function importCommitBesideCurrent(doc: any, commitInfo: { sha: string, message: string }) {
+    if (doc.pageName && doc.nodes) {
+      figma.ui.postMessage({
+        type: 'import-error',
+        message: 'Legacy snapshot format detected in this commit.'
+      });
+      return;
+    }
+
+    const pages = doc?.document?.children ?? [];
+    if (pages.length === 0) {
+      figma.ui.postMessage({ type: 'import-error', message: 'No pages found in snapshot.' });
+      return;
+    }
+
+    const currentPage = figma.currentPage;
+
+    // Calculate bounding box of existing canvas children so we don't overlap!
+    let maxX = 0;
+    let minY = 0;
+    let hasExisting = false;
+    for (const child of currentPage.children) {
+      if ('x' in child && 'width' in child && 'y' in child) {
+        hasExisting = true;
+        maxX = Math.max(maxX, child.x + child.width);
+        minY = Math.min(minY, child.y);
+      }
+    }
+
+    const offsetX = hasExisting ? maxX + 160 : 0;
+    const offsetY = hasExisting ? minY : 0;
+
+    const shortSha = commitInfo.sha.substring(0, 7);
+    const title = commitInfo.message.split('\n')[0] || 'Historical Commit';
+
+    // Create a container Frame for this historical version
+    const container = figma.createFrame();
+    container.name = `Version: ${title} (${shortSha})`;
+    container.x = offsetX;
+    container.y = offsetY;
+    container.fills = []; // Transparent background
+    container.clipsContent = false;
+    container.strokes = [{
+      type: 'SOLID',
+      color: { r: 0.18, g: 0.5, b: 0.97 }, // #2f81f7 GitHub blue
+      opacity: 0.8
+    }];
+    container.strokeWeight = 1;
+    container.dashPattern = [6, 4];
+    container.cornerRadius = 8;
+    currentPage.appendChild(container);
+
+    const topNodes = pages[0].children ?? [];
+    let restored = 0;
+    for (const nodeData of topNodes) {
+      await buildNode(nodeData, container);
+      restored++;
+      figma.ui.postMessage({
+        type: 'import-progress',
+        message: `Importing ${restored}/${topNodes.length} nodes...`
+      });
+    }
+
+    // Auto-fit container around its imported children
+    let innerMaxX = 100;
+    let innerMaxY = 100;
+    for (const c of container.children) {
+      if ('x' in c && 'width' in c && 'y' in c && 'height' in c) {
+        innerMaxX = Math.max(innerMaxX, c.x + c.width);
+        innerMaxY = Math.max(innerMaxY, c.y + c.height);
+      }
+    }
+    container.resize(Math.max(200, innerMaxX + 40), Math.max(200, innerMaxY + 40));
+
+    // Focus & select the imported version
+    currentPage.selection = [container];
+    figma.viewport.scrollAndZoomIntoView([container]);
+
+    figma.ui.postMessage({
+      type: 'import-success',
+      sha: shortSha,
+      title: title,
+      count: restored
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // INIT & DOCUMENT CHANGE LISTENER
   // ─────────────────────────────────────────────────────────────────────────────
@@ -588,6 +674,12 @@ if (figma.editorType === 'figma') {
         await deserializeDocument(msg.doc);
       } catch (err: any) {
         figma.ui.postMessage({ type: 'pull-error', message: err?.message ?? 'Unknown error.' });
+      }
+    } else if (msg.type === 'import-commit-to-canvas') {
+      try {
+        await importCommitBesideCurrent(msg.doc, msg.commit);
+      } catch (err: any) {
+        figma.ui.postMessage({ type: 'import-error', message: err?.message ?? 'Import failed.' });
       }
     } else if (msg.type === 'cancel') {
       figma.closePlugin();
