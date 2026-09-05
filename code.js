@@ -207,7 +207,12 @@ if (figma.editorType === 'figma') {
     }
     function serializeCurrentPage() {
         const page = figma.currentPage;
-        const realChildren = page.children.filter(c => c.getPluginData('gitlayer_preview') !== 'true');
+        const realChildren = page.children.filter(c => c.visible !== false &&
+            c.type !== 'SLICE' &&
+            c.getPluginData('gitlayer_preview') !== 'true' &&
+            !c.name.startsWith('[GitLayer Preview]') &&
+            !c.name.startsWith('[Imported]') &&
+            !c.name.startsWith('__gitlayer_'));
         return {
             document: {
                 children: [
@@ -223,44 +228,32 @@ if (figma.editorType === 'figma') {
             timestamp: new Date().toISOString()
         };
     }
-    async function exportNativePageSvg() {
+    let isExportingCanvasPreview = false;
+    async function exportActiveCanvasArtifacts() {
         const page = figma.currentPage;
-        if (!page || !page.children || page.children.length === 0)
-            return null;
-        const exportTargets = page.children.filter(c => c.visible !== false && c.type !== 'SLICE' && c.getPluginData('gitlayer_preview') !== 'true');
-        if (exportTargets.length === 0)
-            return null;
+        if (!page || !page.children || page.children.length === 0) {
+            return { pdfBase64: null, dataUrl: null };
+        }
+        const exportTargets = page.children.filter(c => c.visible !== false &&
+            c.type !== 'SLICE' &&
+            c.getPluginData('gitlayer_preview') !== 'true' &&
+            !c.name.startsWith('[GitLayer Preview]') &&
+            !c.name.startsWith('[Imported]') &&
+            !c.name.startsWith('__gitlayer_'));
+        if (exportTargets.length === 0) {
+            return { pdfBase64: null, dataUrl: null };
+        }
+        isExportingCanvasPreview = true;
+        let tempFrame = null;
         try {
-            await page.loadAsync();
-        }
-        catch { }
-        // 1. Try whole-page export first
-        try {
-            const pageSvg = await page.exportAsync({
-                format: 'SVG_STRING',
-                svgOutlineText: true,
-                svgSimplifyStroke: true
-            });
-            if (pageSvg && pageSvg.trim().startsWith('<svg') && pageSvg.includes('</svg>')) {
-                return pageSvg;
-            }
-        }
-        catch (pageErr) {
-            console.warn('[GitLayer] Whole-page exportAsync failed, trying fallback...', pageErr);
-        }
-        // 2. If single top-level node
-        if (exportTargets.length === 1) {
-            try {
-                return await exportTargets[0].exportAsync({
-                    format: 'SVG_STRING',
-                    svgOutlineText: true,
-                    svgSimplifyStroke: true
-                });
-            }
-            catch { }
-        }
-        // 3. Fallback: Composite all top-level targets into a single clean SVG
-        try {
+            tempFrame = figma.createFrame();
+            tempFrame.name = '__gitlayer_temp_canvas_export__';
+            tempFrame.setPluginData('gitlayer_preview', 'true');
+            tempFrame.x = -999999;
+            tempFrame.y = -999999;
+            tempFrame.fills = [];
+            tempFrame.clipsContent = false;
+            page.appendChild(tempFrame);
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (const t of exportTargets) {
                 if ('x' in t && 'y' in t && 'width' in t && 'height' in t) {
@@ -270,40 +263,64 @@ if (figma.editorType === 'figma') {
                     maxY = Math.max(maxY, t.y + t.height);
                 }
             }
-            if (!isFinite(minX) || !isFinite(minY))
-                return null;
+            if (!isFinite(minX) || !isFinite(minY)) {
+                return { pdfBase64: null, dataUrl: null };
+            }
             const pad = 40;
-            const vbX = Math.floor(minX - pad);
-            const vbY = Math.floor(minY - pad);
-            const vbW = Math.ceil(maxX - minX + pad * 2);
-            const vbH = Math.ceil(maxY - minY + pad * 2);
-            const items = await Promise.all(exportTargets.map(async (target) => {
-                if (!('x' in target && 'y' in target && 'width' in target && 'height' in target))
-                    return null;
-                if (target.width <= 0 || target.height <= 0)
-                    return null;
+            for (const t of exportTargets) {
                 try {
-                    const svgStr = await target.exportAsync({
-                        format: 'SVG_STRING',
-                        svgOutlineText: true,
-                        svgSimplifyStroke: true
-                    });
-                    if (!svgStr)
-                        return null;
-                    return `<g transform="translate(${target.x}, ${target.y})">${svgStr}</g>`;
+                    const clone = t.clone();
+                    clone.x = t.x - minX + pad;
+                    clone.y = t.y - minY + pad;
+                    tempFrame.appendChild(clone);
                 }
-                catch {
-                    return null;
+                catch (cloneErr) {
+                    console.warn('[GitLayer] Failed to clone target for preview', t.name, cloneErr);
                 }
-            }));
-            const validItems = items.filter(Boolean);
-            if (validItems.length === 0)
-                return null;
-            return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${vbX} ${vbY} ${vbW} ${vbH}">${validItems.join('')}</svg>`;
+            }
+            if (tempFrame.children.length === 0) {
+                return { pdfBase64: null, dataUrl: null };
+            }
+            const frameW = Math.max(100, Math.ceil(maxX - minX + pad * 2));
+            const frameH = Math.max(100, Math.ceil(maxY - minY + pad * 2));
+            tempFrame.resize(frameW, frameH);
+            let pdfBase64 = null;
+            try {
+                const pdfBytes = await tempFrame.exportAsync({ format: 'PDF' });
+                if (pdfBytes && pdfBytes.length > 0) {
+                    pdfBase64 = figma.base64Encode(pdfBytes);
+                }
+            }
+            catch (pdfErr) {
+                console.warn('[GitLayer] Canvas PDF export failed', pdfErr);
+            }
+            let dataUrl = null;
+            try {
+                const pngBytes = await tempFrame.exportAsync({
+                    format: 'PNG',
+                    constraint: { type: 'SCALE', value: 2 }
+                });
+                if (pngBytes && pngBytes.length > 0) {
+                    dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
+                }
+            }
+            catch (pngErr) {
+                console.warn('[GitLayer] Canvas PNG export failed', pngErr);
+            }
+            return { pdfBase64, dataUrl };
         }
-        catch (compositeErr) {
-            console.error('[GitLayer] Composite SVG export failed', compositeErr);
-            return null;
+        catch (err) {
+            console.error('[GitLayer] Failed to export active canvas artifacts', err);
+            return { pdfBase64: null, dataUrl: null };
+        }
+        finally {
+            if (tempFrame) {
+                try {
+                    tempFrame.remove();
+                }
+                catch { }
+            }
+            isExportingCanvasPreview = false;
         }
     }
     async function generateVisualPreview() {
@@ -376,12 +393,13 @@ if (figma.editorType === 'figma') {
         isSendingPreview = true;
         try {
             const payload = serializeCurrentPage();
-            const nativeSvg = await exportNativePageSvg();
+            const { pdfBase64, dataUrl } = await exportActiveCanvasArtifacts();
             const thumbnails = await generateVisualPreview();
             figma.ui.postMessage({
                 type: 'preview-payload',
                 payload: payload,
-                nativeSvg: nativeSvg,
+                pdfBase64: pdfBase64,
+                dataUrl: dataUrl,
                 thumbnails: thumbnails
             });
         }
@@ -910,7 +928,9 @@ if (figma.editorType === 'figma') {
     }
     function dismissCanvasPreview() {
         const currentPage = figma.currentPage;
-        const existingPreviews = currentPage.children.filter(c => c.getPluginData('gitlayer_preview') === 'true');
+        const existingPreviews = currentPage.children.filter(c => c.getPluginData('gitlayer_preview') === 'true' ||
+            c.name.startsWith('[GitLayer Preview]') ||
+            c.name.startsWith('[Imported]'));
         let count = 0;
         for (const p of existingPreviews) {
             try {
@@ -1031,7 +1051,7 @@ if (figma.editorType === 'figma') {
             await figma.loadAllPagesAsync();
             let previewTimeout = null;
             figma.on('documentchange', () => {
-                if (isRenderingCommitImage)
+                if (isRenderingCommitImage || isExportingCanvasPreview)
                     return;
                 if (previewTimeout !== null)
                     clearTimeout(previewTimeout);
@@ -1072,35 +1092,16 @@ if (figma.editorType === 'figma') {
         }
         else if (msg.type === 'serialize-and-commit') {
             const payload = serializeCurrentPage();
-            const nativeSvg = await exportNativePageSvg();
-            if (nativeSvg) {
-                payload.previewSvg = nativeSvg;
+            const { pdfBase64, dataUrl } = await exportActiveCanvasArtifacts();
+            if (pdfBase64) {
+                payload.previewPdf = pdfBase64;
+            }
+            if (dataUrl) {
+                payload.previewImage = dataUrl;
             }
             const thumbnails = await generateVisualPreview();
             if (thumbnails) {
                 payload.thumbnails = thumbnails;
-            }
-            try {
-                await figma.currentPage.loadAsync();
-                const pageBytes = await figma.currentPage.exportAsync({
-                    format: 'PNG',
-                    constraint: { type: 'SCALE', value: 2 }
-                });
-                if (pageBytes && pageBytes.length > 0) {
-                    payload.previewImage = `data:image/png;base64,${figma.base64Encode(pageBytes)}`;
-                }
-            }
-            catch (e) {
-                console.warn('[GitLayer] Could not export page previewImage', e);
-            }
-            try {
-                const pagePdf = await figma.currentPage.exportAsync({ format: 'PDF' });
-                if (pagePdf && pagePdf.length > 0) {
-                    payload.previewPdf = figma.base64Encode(pagePdf);
-                }
-            }
-            catch (e) {
-                console.warn('[GitLayer] Could not export page previewPdf', e);
             }
             figma.ui.postMessage({
                 type: 'commit-payload',
@@ -1108,7 +1109,6 @@ if (figma.editorType === 'figma') {
                 repo: msg.repo,
                 branch: msg.branch,
                 payload: payload,
-                nativeSvg: nativeSvg,
                 message: msg.summary || `GitLayer: Sync "${figma.currentPage.name}"`,
                 source: msg.source
             });
