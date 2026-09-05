@@ -250,16 +250,50 @@
     .ghd-file-item {
       display: flex;
       align-items: center;
-      padding: 4px 16px;
+      padding: 5px 12px;
       font-size: 13px;
-      color: #CCC;
-      background-color: #37373D;
+      color: #c9d1d9;
+      background-color: transparent;
+      cursor: pointer;
+      gap: 8px;
     }
-    .ghd-file-item input { margin-right: 8px; }
+    .ghd-file-item:hover { background-color: rgba(255,255,255,0.05); }
+    .ghd-file-item.selected { background-color: #2a4b6b; }
     .ghd-commit-box {
-      padding: 16px;
+      padding: 12px;
       background-color: #252526;
-      border-top: 1px solid #333;
+      border-top: 1px solid #1E1E1E;
+    }
+    /* History item styles */
+    .history-item {
+      padding: 10px 12px;
+      border-bottom: 1px solid #1E1E1E;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .history-item:hover { background: rgba(255,255,255,0.04); }
+    .history-item-title {
+      font-size: 13px;
+      color: #e6edf3;
+      font-weight: 500;
+      margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .history-item-meta {
+      font-size: 11px;
+      color: #8b949e;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .history-item-sha {
+      font-family: monospace;
+      background: #2d2d2d;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 11px;
     }
     .ghd-input {
       width: 100%;
@@ -689,42 +723,55 @@
     <div class="ghd-main">
       <div class="ghd-sidebar">
         <div class="ghd-tabs">
-          <div class="ghd-tab active">Changes</div>
-          <div class="ghd-tab">History</div>
+          <div class="ghd-tab active" id="sidebar-tab-changes">Changes</div>
+          <div class="ghd-tab" id="sidebar-tab-history">History</div>
         </div>
         
-        <div id="tab-content-changes" style="display: flex; flex-direction: column; flex: 1;">
-          <div style="padding: 12px 16px 8px 16px; border-bottom: 1px solid #1E1E1E;">
-            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-               <!-- Filter button and input -->
-               <button style="background: transparent; border: 1px solid #444; border-radius: 4px; color: #c9d1d9; display: flex; align-items: center; justify-content: center; width: 44px; cursor: pointer; padding: 4px;">
-                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4h12v1.5H2V4zm2 4.5h8V10H4V8.5zm2 4.5h4v1.5H6v-1.5z"/></svg>
-                 <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="margin-left:2px"><path d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z"/></svg>
-               </button>
-               <input type="text" class="input-pill" placeholder="Filter" style="flex: 1; height: 28px; font-size: 13px;" />
-            </div>
-            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: #e6edf3;">
-              <input type="checkbox" checked disabled style="margin: 0; appearance: none; -webkit-appearance: none; width: 14px; height: 14px; background: rgba(255,255,255,0.1); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.2);"><svg width="10" height="10" viewBox="0 0 16 16" fill="white" style="position: absolute; pointer-events: none; margin-left: 2px;"><use href="#icon-check"/></svg></input>
-              <span>1 changed file</span>
+        <!-- Changes Tab -->
+        <div id="tab-content-changes" style="display: flex; flex-direction: column; flex: 1; overflow: hidden;">
+          
+          <!-- Filter row -->
+          <div style="padding: 10px 12px; border-bottom: 1px solid #1E1E1E; display: flex; gap: 8px; align-items: center;">
+            <button id="btn-filter" style="background: #2D2D2D; border: 1px solid #444; border-radius: 4px; color: #c9d1d9; display: flex; align-items: center; gap: 2px; cursor: pointer; padding: 4px 8px; white-space: nowrap;">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M.75 3h14.5a.75.75 0 010 1.5H.75A.75.75 0 010 3.75.75.75 0 01.75 3zm2 4.5h10.5a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5zm3 4.5h4.5a.75.75 0 010 1.5h-4.5a.75.75 0 010-1.5z"/></svg>
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z"/></svg>
+            </button>
+            <input type="text" id="changes-filter-input" placeholder="Filter" style="flex: 1; background: #1E1E1E; border: 1px solid #444; border-radius: 4px; color: #c9d1d9; padding: 4px 8px; font-size: 13px; outline: none;" />
+          </div>
+
+          <!-- File count row -->
+          <div style="padding: 6px 12px; border-bottom: 1px solid #1E1E1E; display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="select-all-files" checked style="width: 14px; height: 14px; accent-color: #2f81f7; cursor: pointer;" />
+            <span style="font-size: 12px; color: #8b949e;" id="changed-files-count">1 changed file</span>
+          </div>
+
+          <!-- File list -->
+          <div class="ghd-file-list" id="changes-file-list">
+            <div class="ghd-file-item" style="padding: 5px 12px; background: transparent; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" checked style="width: 13px; height: 13px; accent-color: #2f81f7; cursor: pointer; flex-shrink: 0;" />
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="#57ab5a" style="flex-shrink:0;"><path d="M8.75 1.75a.75.75 0 00-1.5 0V7H1.75a.75.75 0 000 1.5H7v5.25a.75.75 0 001.5 0V8.5h5.25a.75.75 0 000-1.5H8.75V1.75z"/></svg>
+              <span style="color: #c9d1d9; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">figma-snapshot.json</span>
             </div>
           </div>
 
-          <div class="ghd-file-list" style="padding-top: 8px;">
-            <div class="ghd-file-item" style="padding: 4px 16px; background-color: transparent;">
-              <input type="checkbox" checked disabled style="margin-right: 8px; appearance: none; -webkit-appearance: none; width: 14px; height: 14px; background: rgba(255,255,255,0.1); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,0.2);"><svg width="10" height="10" viewBox="0 0 16 16" fill="white" style="position: absolute; pointer-events: none; margin-left: 2px; margin-top: 2px;"><use href="#icon-check"/></svg></input>
-              <span style="color: #c9d1d9;">figma-snapshot.json</span>
-            </div>
-          </div>
-
+          <!-- Commit box -->
           <div class="ghd-commit-box">
             <input type="text" id="commit-summary" class="ghd-input" placeholder="Summary (required)" />
             <textarea id="commit-desc" class="ghd-input ghd-textarea" placeholder="Description"></textarea>
-            <button id="commit-btn" class="btn-blue" style="width: 100%; margin: 0;">Commit to main</button>
+            <button id="commit-btn" class="btn-blue" style="width: 100%; margin: 0;">Commit to <strong id="commit-branch-label">main</strong></button>
           </div>
         </div>
-        
-        <div id="tab-content-history" style="display: none; padding: 16px; color: #888; font-size: 13px; text-align: center;">
-          History not implemented yet.
+
+        <!-- History Tab -->
+        <div id="tab-content-history" style="display: none; flex-direction: column; flex: 1; overflow: hidden;">
+          <div id="history-list" style="flex: 1; overflow-y: auto; padding: 8px 0;">
+            <div style="padding: 32px 16px; text-align: center; color: #8b949e; font-size: 13px;" id="history-loading">
+              <div style="margin-bottom: 8px;">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="#444"><path d="M12 3a9 9 0 100 18A9 9 0 0012 3zm0-1a10 10 0 110 20A10 10 0 0112 2zm.75 5.25a.75.75 0 00-1.5 0v5.69L8.22 9.97a.75.75 0 00-1.06 1.06l3.5 3.5a.75.75 0 001.06 0l3.5-3.5a.75.75 0 00-1.06-1.06l-1.44 1.44V7.25z"/></svg>
+              </div>
+              Loading commit history...
+            </div>
+          </div>
         </div>
       </div>
       <div class="ghd-diff">
@@ -1149,6 +1196,9 @@
       document.getElementById('max-repo-name').innerText = currentRepo || 'Setup required';
       document.getElementById('min-branch-name').innerText = currentBranch;
       document.getElementById('max-branch-name').innerText = currentBranch;
+      // Update commit button label
+      const btn = document.getElementById('commit-btn');
+      if (btn) btn.innerHTML = `Commit to <strong>${currentBranch}</strong>`;
     }
 
     let hasFetchedBranches = false;
@@ -1206,20 +1256,92 @@
     });
 
     // Tab Listeners (Changes vs History)
-    const sidebarTabs = document.querySelectorAll('.ghd-sidebar .ghd-tab');
-    sidebarTabs.forEach(tab => {
-      tab.onclick = () => {
-        sidebarTabs.forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        if (tab.innerText === 'History') {
-          document.getElementById('tab-content-changes').style.display = 'none';
-          document.getElementById('tab-content-history').style.display = 'block';
-        } else {
-          document.getElementById('tab-content-changes').style.display = 'flex';
-          document.getElementById('tab-content-history').style.display = 'none';
+    document.getElementById('sidebar-tab-changes').onclick = () => {
+      document.getElementById('sidebar-tab-changes').classList.add('active');
+      document.getElementById('sidebar-tab-history').classList.remove('active');
+      document.getElementById('tab-content-changes').style.display = 'flex';
+      document.getElementById('tab-content-history').style.display = 'none';
+    };
+
+    document.getElementById('sidebar-tab-history').onclick = () => {
+      document.getElementById('sidebar-tab-history').classList.add('active');
+      document.getElementById('sidebar-tab-changes').classList.remove('active');
+      document.getElementById('tab-content-changes').style.display = 'none';
+      document.getElementById('tab-content-history').style.display = 'flex';
+      fetchCommitHistory();
+    };
+
+    // Fetch and render commit history
+    async function fetchCommitHistory() {
+      const list = document.getElementById('history-list');
+      list.innerHTML = '<div style="padding: 32px 16px; text-align: center; color: #8b949e; font-size: 13px;">Loading commit history...</div>';
+      
+      if (!currentRepo || !currentPat) {
+        list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">No repository connected.</div>';
+        return;
+      }
+      
+      try {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/commits?sha=${currentBranch}&per_page=30`, {
+          headers: {
+            'Authorization': `Bearer ${currentPat}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        
+        if (!res.ok) {
+          const e = await res.json();
+          list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">${e.message || 'Failed to load history.'}</div>`;
+          return;
         }
-      };
-    });
+        
+        const commits = await res.json();
+        
+        if (!commits || commits.length === 0) {
+          list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">No commits yet on this branch.</div>';
+          return;
+        }
+        
+        list.innerHTML = '';
+        commits.forEach(commit => {
+          const date = new Date(commit.commit.author.date);
+          const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          const sha = commit.sha.substring(0, 7);
+          const message = commit.commit.message.split('\n')[0]; // First line only
+          const author = commit.commit.author.name;
+          const avatarUrl = commit.author?.avatar_url || '';
+          
+          const item = document.createElement('div');
+          item.className = 'history-item';
+          item.innerHTML = `
+            <div class="history-item-title" title="${message}">${message}</div>
+            <div class="history-item-meta">
+              ${avatarUrl ? `<img src="${avatarUrl}" width="14" height="14" style="border-radius: 50%;" />` : ''}
+              <span>${author}</span>
+              <span>•</span>
+              <span>${dateStr} at ${timeStr}</span>
+              <span style="margin-left: auto;" class="history-item-sha">${sha}</span>
+            </div>
+          `;
+          item.onclick = () => {
+            window.open(`https://github.com/${currentRepo}/commit/${commit.sha}`, '_blank');
+          };
+          list.appendChild(item);
+        });
+        
+      } catch (e) {
+        list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">Network error: ${e.message}</div>`;
+      }
+    }
+
+    // Update commit button to show current branch
+    function updateCommitBtn() {
+      const btn = document.getElementById('commit-btn');
+      const lbl = document.getElementById('commit-branch-label');
+      if (lbl) lbl.innerText = currentBranch;
+      if (btn) btn.innerHTML = `Commit to <strong>${currentBranch}</strong>`;
+    }
 
     // Create New Branch API
     document.getElementById('btn-new-branch').addEventListener('click', () => {
