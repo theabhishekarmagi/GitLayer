@@ -1080,10 +1080,23 @@
         });
       }
 
-      if (filtered.length === 0 && cachedBranches.length > 0) {
-        list.innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">No branches found</div>';
-      } else if (cachedBranches.length === 0) {
-        list.innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">Loading...</div>';
+      if (filtered.length === 0) {
+        if (!hasFetchedBranches) {
+          list.innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">Loading...</div>';
+        } else {
+          // Repo might be empty, but we are locally on a branch
+          const header = document.createElement('div');
+          header.className = 'dropdown-group-header';
+          header.innerText = 'Default Branch';
+          list.appendChild(header);
+
+          const div = document.createElement('div');
+          div.className = 'dropdown-item selected';
+          div.innerHTML = `<svg class="check-icon" width="16" height="16"><use href="#icon-check"/></svg>
+                           ${currentBranch}`;
+          div.onclick = () => selectBranch(currentBranch);
+          list.appendChild(div);
+        }
       }
     }
 
@@ -1105,9 +1118,12 @@
       document.getElementById('max-branch-name').innerText = currentBranch;
     }
 
+    let hasFetchedBranches = false;
+
     // Fetch Branches API
     async function fetchBranches() {
       if (!currentRepo || !currentPat) return;
+      hasFetchedBranches = false;
       try {
         const res = await fetch(`https://api.github.com/repos/${currentRepo}/branches`, {
           headers: {
@@ -1117,10 +1133,15 @@
         });
         if (res.ok) {
           cachedBranches = await res.json();
-          if (activeDropdown === 'branch-dropdown') renderBranchDropdown(document.getElementById('branch-filter').value);
+        } else {
+          cachedBranches = [];
         }
       } catch (err) {
         console.error("Failed to fetch branches", err);
+        cachedBranches = [];
+      } finally {
+        hasFetchedBranches = true;
+        if (activeDropdown === 'branch-dropdown') renderBranchDropdown(document.getElementById('branch-filter').value);
       }
     }
 
@@ -1173,8 +1194,13 @@
       btn.disabled = true;
 
       try {
-        const current = cachedBranches.find(b => b.name === currentBranch);
-        if (!current) throw new Error("Error determining current branch SHA.");
+        if (cachedBranches.length === 0) {
+          throw new Error("Cannot create branch: Repository is empty or branches failed to load. Please commit first.");
+        }
+        let current = cachedBranches.find(b => b.name === currentBranch);
+        if (!current) {
+          current = cachedBranches[0]; // fallback to first available branch
+        }
 
         const res = await fetch(`https://api.github.com/repos/${currentRepo}/git/refs`, {
           method: 'POST',
