@@ -624,7 +624,7 @@ if (figma.editorType === 'figma') {
                     const kids = [];
                     if (data.children) {
                         for (const c of data.children) {
-                            const b = await buildNode(c, figma.currentPage);
+                            const b = await buildNode(c, parent);
                             if (b)
                                 kids.push(b);
                         }
@@ -706,7 +706,7 @@ if (figma.editorType === 'figma') {
                     const kids = [];
                     if (data.children) {
                         for (const c of data.children) {
-                            const b = await buildNode(c, figma.currentPage);
+                            const b = await buildNode(c, parent);
                             if (b)
                                 kids.push(b);
                         }
@@ -870,6 +870,74 @@ if (figma.editorType === 'figma') {
             count: count
         });
     }
+    let isRenderingCommitImage = false;
+    async function renderCommitToImage(doc) {
+        if (doc?.previewImage && typeof doc.previewImage === 'string') {
+            return doc.previewImage;
+        }
+        const pages = doc?.document?.children ?? [];
+        if (pages.length === 0)
+            return null;
+        const topNodes = (pages[0].children ?? []).filter((n) => n.visible !== false && n.type !== 'SLICE');
+        if (topNodes.length === 0)
+            return null;
+        isRenderingCommitImage = true;
+        let tempFrame = null;
+        try {
+            tempFrame = figma.createFrame();
+            tempFrame.name = '__gitlayer_temp_render__';
+            tempFrame.setPluginData('gitlayer_preview', 'true');
+            tempFrame.x = -999999;
+            tempFrame.y = -999999;
+            tempFrame.fills = [{ type: 'SOLID', color: { r: 0.08, g: 0.08, b: 0.09 } }];
+            tempFrame.clipsContent = false;
+            figma.currentPage.appendChild(tempFrame);
+            for (const nodeData of topNodes) {
+                await buildNode(nodeData, tempFrame);
+            }
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const c of tempFrame.children) {
+                if ('x' in c && 'y' in c && 'width' in c && 'height' in c) {
+                    minX = Math.min(minX, c.x);
+                    minY = Math.min(minY, c.y);
+                    maxX = Math.max(maxX, c.x + c.width);
+                    maxY = Math.max(maxY, c.y + c.height);
+                }
+            }
+            if (!isFinite(minX) || !isFinite(minY)) {
+                return null;
+            }
+            const pad = 40;
+            for (const c of tempFrame.children) {
+                if ('x' in c && 'y' in c) {
+                    c.x = c.x - minX + pad;
+                    c.y = c.y - minY + pad;
+                }
+            }
+            const frameW = Math.max(100, Math.ceil(maxX - minX + pad * 2));
+            const frameH = Math.max(100, Math.ceil(maxY - minY + pad * 2));
+            tempFrame.resize(frameW, frameH);
+            const bytes = await tempFrame.exportAsync({
+                format: 'PNG',
+                constraint: { type: 'SCALE', value: 2 }
+            });
+            const base64 = figma.base64Encode(bytes);
+            return `data:image/png;base64,${base64}`;
+        }
+        catch (err) {
+            console.error('[GitLayer] Failed to render commit image', err);
+            return null;
+        }
+        finally {
+            if (tempFrame) {
+                try {
+                    tempFrame.remove();
+                }
+                catch { }
+            }
+            isRenderingCommitImage = false;
+        }
+    }
     // ─────────────────────────────────────────────────────────────────────────────
     // INIT & DOCUMENT CHANGE LISTENER
     // ─────────────────────────────────────────────────────────────────────────────
@@ -889,6 +957,8 @@ if (figma.editorType === 'figma') {
             await figma.loadAllPagesAsync();
             let previewTimeout = null;
             figma.on('documentchange', () => {
+                if (isRenderingCommitImage)
+                    return;
                 if (previewTimeout !== null)
                     clearTimeout(previewTimeout);
                 previewTimeout = setTimeout(() => {
@@ -936,6 +1006,18 @@ if (figma.editorType === 'figma') {
             if (thumbnails) {
                 payload.thumbnails = thumbnails;
             }
+            try {
+                const pageBytes = await figma.currentPage.exportAsync({
+                    format: 'PNG',
+                    constraint: { type: 'SCALE', value: 2 }
+                });
+                if (pageBytes && pageBytes.length > 0) {
+                    payload.previewImage = `data:image/png;base64,${figma.base64Encode(pageBytes)}`;
+                }
+            }
+            catch (e) {
+                console.warn('[GitLayer] Could not export page previewImage', e);
+            }
             figma.ui.postMessage({
                 type: 'commit-payload',
                 pat: msg.pat,
@@ -965,6 +1047,23 @@ if (figma.editorType === 'figma') {
         }
         else if (msg.type === 'dismiss-canvas-preview') {
             dismissCanvasPreview();
+        }
+        else if (msg.type === 'render-commit-image') {
+            try {
+                const dataUrl = await renderCommitToImage(msg.doc);
+                figma.ui.postMessage({
+                    type: 'history-rendered-image',
+                    sha: msg.sha,
+                    dataUrl: dataUrl
+                });
+            }
+            catch (err) {
+                figma.ui.postMessage({
+                    type: 'history-rendered-image',
+                    sha: msg.sha,
+                    dataUrl: null
+                });
+            }
         }
         else if (msg.type === 'cancel') {
             figma.closePlugin();

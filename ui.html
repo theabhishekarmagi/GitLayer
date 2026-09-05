@@ -13,6 +13,11 @@
       background-color: #31333A; /* Default dark background for the bar */
       overflow: hidden;
     }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
     
     /* Onboarding styles */
     .header-onboarding {
@@ -882,7 +887,7 @@
         <!-- Visual Diagram View (Default) -->
         <div id="diff-visual-container" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; overflow: hidden; background: #141518; position: relative; user-select: none;">
           <div id="diff-visual-stage" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; transform-origin: center center; will-change: transform; cursor: grab;">
-            <img id="diff-diagram-img" style="max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); border: 1px solid #2d2e33; display: none;" />
+            <img id="diff-diagram-img" draggable="false" style="max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); border: 1px solid #2d2e33; display: none; pointer-events: none; -webkit-user-drag: none;" />
             <div id="diff-diagram-svg" style="max-width: 100%; max-height: 480px; width: 100%; display: none; align-items: center; justify-content: center;"></div>
             <div id="diff-empty-state" style="color: #8b949e; font-size: 13px; text-align: center; pointer-events: none;">
               <svg width="40" height="40" viewBox="0 0 24 24" fill="#3a3b3e" style="margin-bottom: 8px;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5-7l-3 3.72L9 13l-3 4h12l-4-5z"/></svg>
@@ -1429,6 +1434,7 @@
     let latestNativeSvg = null;
     let selectedCommit = null;
     let selectedCommitDoc = null;
+    const historyImageCache = new Map();
 
     document.getElementById('btn-toggle-diagram').onclick = () => {
       currentViewMode = 'diagram';
@@ -1918,8 +1924,20 @@
         if (selectedCommitDoc) {
           const topNodes = selectedCommitDoc?.document?.children?.[0]?.children || [];
 
-          // 1. Native vector SVG stored in snapshot
-          if (selectedCommitDoc.previewSvg) {
+          // 1. High-res 2x retina render from Figma engine (cached or embedded)
+          const cachedImg = historyImageCache.get(selectedCommit.sha) || selectedCommitDoc.previewImage;
+          if (cachedImg && cachedImg !== 'failed') {
+            img.src = cachedImg;
+            img.style.display = 'block';
+            svg.style.display = 'none';
+            empty.style.display = 'none';
+            meta.style.display = 'block';
+            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha} (Figma Engine)`;
+            rendered = true;
+          }
+
+          // 2. Vector SVG if embedded in commit snapshot
+          if (!rendered && selectedCommitDoc.previewSvg) {
             svg.innerHTML = formatNativeSvg(selectedCommitDoc.previewSvg);
             svg.style.display = 'flex';
             img.style.display = 'none';
@@ -1929,7 +1947,7 @@
             rendered = true;
           }
 
-          // 2. Fallback thumbnails
+          // 3. Fallback thumbnails if available
           if (!rendered && selectedCommitDoc.thumbnails && selectedCommitDoc.thumbnails.length > 0) {
             const svgContent = renderThumbnailsToSvg(selectedCommitDoc.thumbnails);
             if (svgContent) {
@@ -1944,41 +1962,69 @@
             }
           }
 
-          // 3. Fallback for older commits with one-click Canvas Preview
-          if (!rendered) {
-            if (topNodes.length > 0) {
-              const legacyNotice = `
-                <div style="width: 100%; max-width: 480px; margin-bottom: 8px; padding: 6px 12px; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: #8b949e;">
-                  <span>ℹ️ Legacy snapshot without vector preview</span>
-                  <button id="btn-legacy-preview-canvas" style="background: #238636; border: none; color: #fff; font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 4px; cursor: pointer;">👁️ View on Canvas</button>
-                </div>
-              `;
-              svg.innerHTML = legacyNotice + renderNodesToSvg(topNodes);
-              svg.style.display = 'flex';
-              svg.style.flexDirection = 'column';
-              img.style.display = 'none';
-              empty.style.display = 'none';
-              meta.style.display = 'block';
-              meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha}`;
-              rendered = true;
+          // 4. Request native C++ render from Figma engine for legacy snapshots without preview
+          if (!rendered && historyImageCache.get(selectedCommit.sha) !== 'failed' && topNodes.length > 0) {
+            img.style.display = 'none';
+            svg.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = `
+              <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+                <div style="width: 22px; height: 22px; border: 2.5px solid #333; border-top-color: #2ea043; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                <div style="color: #c9d1d9; font-size: 12px; font-weight: 500;">Rendering snapshot with Figma engine...</div>
+                <div style="color: #8b949e; font-size: 11px;">Generating pixel-perfect high-resolution preview</div>
+              </div>
+            `;
+            meta.style.display = 'none';
 
-              setTimeout(() => {
-                const legacyBtn = document.getElementById('btn-legacy-preview-canvas');
-                if (legacyBtn) legacyBtn.onclick = triggerCanvasPreview;
-              }, 50);
-            } else {
-              img.style.display = 'none';
-              svg.style.display = 'none';
-              empty.style.display = 'block';
-              empty.innerHTML = '<div>No shapes in this commit</div>';
-              meta.style.display = 'none';
-              resetZoom();
-            }
+            parent.postMessage({
+              pluginMessage: {
+                type: 'render-commit-image',
+                doc: selectedCommitDoc,
+                sha: selectedCommit.sha
+              }
+            }, '*');
+          } else if (!rendered && topNodes.length > 0) {
+            // Render attempt failed: Provide fallback with "View on Canvas" button
+            img.style.display = 'none';
+            svg.style.display = 'flex';
+            svg.style.flexDirection = 'column';
+            svg.innerHTML = `
+              <div style="width: 100%; max-width: 480px; margin-bottom: 8px; padding: 6px 12px; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: #8b949e;">
+                <span>Snapshot preview unavailable</span>
+                <button id="btn-legacy-preview-canvas" style="background: #238636; border: none; color: #fff; font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 4px; cursor: pointer;">👁️ View on Canvas</button>
+              </div>
+            `;
+            empty.style.display = 'none';
+            meta.style.display = 'none';
+            setTimeout(() => {
+              const legacyBtn = document.getElementById('btn-legacy-preview-canvas');
+              if (legacyBtn) legacyBtn.onclick = triggerCanvasPreview;
+            }, 50);
+          } else if (!rendered) {
+            img.style.display = 'none';
+            svg.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<div>No shapes in this commit</div>';
+            meta.style.display = 'none';
+            resetZoom();
           }
 
           if (currentViewMode === 'code') {
             updateCodeBox(selectedCommitDoc, false);
           }
+        } else if (selectedCommit) {
+          img.style.display = 'none';
+          svg.style.display = 'none';
+          empty.style.display = 'block';
+          empty.innerHTML = `
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+              <div style="width: 22px; height: 22px; border: 2.5px solid #333; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+              <div style="color: #8b949e; font-size: 12px;">Loading commit snapshot...</div>
+            </div>
+          `;
+          meta.style.display = 'none';
+          codeBox.innerHTML = '<span style="color: #8b949e;">Loading commit data...</span>';
+          resetZoom();
         } else {
           img.style.display = 'none';
           svg.style.display = 'none';
@@ -2511,6 +2557,18 @@
           status.style.color = '#f14c4c';
           if (isMin) document.getElementById('btn-min-push').disabled = false;
           else document.getElementById('commit-btn').disabled = false;
+        }
+      }
+
+      // High-resolution image rendered by Figma engine for historical commit
+      if (msg.type === 'history-rendered-image') {
+        if (msg.dataUrl) {
+          historyImageCache.set(msg.sha, msg.dataUrl);
+        } else {
+          historyImageCache.set(msg.sha, 'failed');
+        }
+        if (activeMainTab === 'history' && selectedCommit && selectedCommit.sha === msg.sha) {
+          updateRightPanelView();
         }
       }
 
