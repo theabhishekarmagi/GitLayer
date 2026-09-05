@@ -349,21 +349,45 @@
       resize: none;
     }
     
-    /* Right pane (Diff view) */
+    /* Right pane (Diagram & Diff view) */
     .ghd-diff {
       flex: 1;
-      background-color: #1E1E1E;
-      font-family: 'Consolas', 'Courier New', monospace;
+      background-color: #141518;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       font-size: 12px;
       color: #D4D4D4;
-      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
     .diff-header {
       padding: 8px 16px;
-      background-color: #252526;
-      border-bottom: 1px solid #333;
+      background-color: #222327;
+      border-bottom: 1px solid #2d2d30;
       display: flex;
       align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      min-height: 38px;
+      box-sizing: border-box;
+    }
+    .view-toggle-btn {
+      background: transparent;
+      border: none;
+      color: #8b949e;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .view-toggle-btn.active {
+      background: #2f81f7;
+      color: #ffffff;
+      font-weight: 500;
+    }
+    .view-toggle-btn:hover:not(.active) {
+      color: #c9d1d9;
     }
     .diff-content {
       padding: 16px;
@@ -811,11 +835,38 @@
         </div>
       </div>
       <div class="ghd-diff">
-        <div class="diff-header">
-          <span style="color: #569cd6; margin-right: 8px;">{ }</span>
-          <span>figma-snapshot.json</span>
+        <div class="diff-header" id="diff-header-bar">
+          <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; max-width: 60%;">
+            <span id="diff-header-icon" style="font-size: 13px;">🖼️</span>
+            <span id="diff-header-title" style="color: #e6edf3; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Diagram Preview</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+            <div id="diff-header-history-actions" style="display: none; align-items: center; gap: 8px;">
+              <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
+            </div>
+            <div style="display: flex; align-items: center; background: #16171a; border: 1px solid #333; border-radius: 4px; padding: 2px;">
+              <button id="btn-toggle-diagram" class="view-toggle-btn active">Diagram</button>
+              <button id="btn-toggle-code" class="view-toggle-btn">Code</button>
+            </div>
+          </div>
         </div>
-        <div class="diff-content" id="diff-preview">Loading preview...</div>
+
+        <!-- Visual Diagram View (Default) -->
+        <div id="diff-visual-container" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; overflow: auto; background: #141518; position: relative;">
+          <div id="diff-visual-box" style="max-width: 100%; max-height: 100%; display: flex; align-items: center; justify-content: center;">
+            <img id="diff-diagram-img" style="max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); border: 1px solid #2d2e33; display: none;" />
+            <div id="diff-diagram-svg" style="max-width: 100%; max-height: 480px; width: 100%; display: none;"></div>
+            <div id="diff-empty-state" style="color: #8b949e; font-size: 13px; text-align: center;">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="#3a3b3e" style="margin-bottom: 8px;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5-7l-3 3.72L9 13l-3 4h12l-4-5z"/></svg>
+              <div>Canvas is empty</div>
+              <div style="font-size: 11px; color: #555; margin-top: 4px;">Draw shapes in Figma to see the diagram</div>
+            </div>
+          </div>
+          <div id="diff-diagram-meta" style="margin-top: 14px; font-size: 11px; color: #8b949e; background: #1e1f23; padding: 3px 12px; border-radius: 12px; border: 1px solid #2d2e33; display: none;"></div>
+        </div>
+
+        <!-- Raw JSON Code View -->
+        <div id="diff-code-container" style="flex: 1; padding: 16px; overflow: auto; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; line-height: 1.5; white-space: pre; background: #18191c; display: none;"></div>
       </div>
     </div>
   </div>
@@ -1332,22 +1383,234 @@
       };
     });
 
+    // --- Visual Diagram & Code Toggle State ---
+    let currentViewMode = 'diagram'; // 'diagram' | 'code'
+    let activeMainTab = 'changes'; // 'changes' | 'history'
+    let latestCanvasPayload = null;
+    let latestCanvasImage = null;
+    let selectedCommit = null;
+    let selectedCommitDoc = null;
+
+    document.getElementById('btn-toggle-diagram').onclick = () => {
+      currentViewMode = 'diagram';
+      updateRightPanelView();
+    };
+    document.getElementById('btn-toggle-code').onclick = () => {
+      currentViewMode = 'code';
+      updateRightPanelView();
+    };
+
+    function updateViewModeUI() {
+      const isDiagram = currentViewMode === 'diagram';
+      document.getElementById('btn-toggle-diagram').classList.toggle('active', isDiagram);
+      document.getElementById('btn-toggle-code').classList.toggle('active', !isDiagram);
+      document.getElementById('diff-visual-container').style.display = isDiagram ? 'flex' : 'none';
+      document.getElementById('diff-code-container').style.display = isDiagram ? 'none' : 'block';
+    }
+
+    // Client-side SVG renderer for Figma node hierarchies
+    function renderNodesToSvg(nodes) {
+      if (!nodes || nodes.length === 0) {
+        return '<div style="color: #8b949e; font-size: 13px;">No shapes found</div>';
+      }
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      function scanBounds(list) {
+        for (const n of list) {
+          const x = n.x ?? n.absoluteBoundingBox?.x;
+          const y = n.y ?? n.absoluteBoundingBox?.y;
+          const w = n.width ?? n.absoluteBoundingBox?.width;
+          const h = n.height ?? n.absoluteBoundingBox?.height;
+          if (typeof x === 'number' && typeof y === 'number' && typeof w === 'number' && typeof h === 'number') {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x + w);
+            maxY = Math.max(maxY, y + h);
+          }
+          if (n.children) scanBounds(n.children);
+        }
+      }
+      scanBounds(nodes);
+      if (!isFinite(minX)) {
+        return '<div style="color: #8b949e; font-size: 13px;">No measurable shapes</div>';
+      }
+
+      const pad = Math.max(24, Math.min(80, (maxX - minX) * 0.05));
+      const vbX = minX - pad;
+      const vbY = minY - pad;
+      const vbW = Math.max(30, (maxX - minX) + pad * 2);
+      const vbH = Math.max(30, (maxY - minY) + pad * 2);
+
+      function renderNode(n) {
+        const x = n.x ?? n.absoluteBoundingBox?.x ?? 0;
+        const y = n.y ?? n.absoluteBoundingBox?.y ?? 0;
+        const w = n.width ?? n.absoluteBoundingBox?.width ?? 100;
+        const h = n.height ?? n.absoluteBoundingBox?.height ?? 100;
+
+        let fill = '#383b42';
+        let fillOpacity = n.opacity ?? 1;
+        if (n.fills && n.fills[0]) {
+          const f = n.fills[0];
+          if (f.type === 'SOLID' && f.color) {
+            fill = `rgb(${Math.round(f.color.r * 255)}, ${Math.round(f.color.g * 255)}, ${Math.round(f.color.b * 255)})`;
+            if (f.opacity !== undefined) fillOpacity = f.opacity;
+          }
+        }
+        let stroke = 'none';
+        let strokeW = 0;
+        if (n.strokes && n.strokes[0] && n.strokes[0].color) {
+          const sc = n.strokes[0].color;
+          stroke = `rgb(${Math.round(sc.r * 255)}, ${Math.round(sc.g * 255)}, ${Math.round(sc.b * 255)})`;
+          strokeW = n.strokeWeight || 1;
+        }
+
+        const r = n.cornerRadius || 0;
+        let childrenSvg = '';
+        if (n.children && n.children.length > 0) {
+          childrenSvg = n.children.map(renderNode).join('');
+        }
+
+        if (n.type === 'TEXT') {
+          const fs = n.style?.fontSize || n.fontSize || 14;
+          return `<text x="${x}" y="${y + fs}" fill="${fill}" fill-opacity="${fillOpacity}" font-size="${fs}" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="${(n.style?.fontWeight || 400) >= 700 ? 'bold' : 'normal'}">${escapeHtml(n.characters || '')}</text>`;
+        }
+        if (n.type === 'ELLIPSE') {
+          return `<ellipse cx="${x + w/2}" cy="${y + h/2}" rx="${w/2}" ry="${h/2}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}" />${childrenSvg}`;
+        }
+        return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}" />${childrenSvg}`;
+      }
+
+      const elements = nodes.map(renderNode).join('');
+      return `<svg viewBox="${vbX} ${vbY} ${vbW} ${vbH}" style="max-width: 100%; max-height: 480px; width: 100%; height: 100%; filter: drop-shadow(0 8px 30px rgba(0,0,0,0.6)); border-radius: 6px;">${elements}</svg>`;
+    }
+
+    // Render either the visual diagram or code diff depending on view mode & active tab
+    function updateRightPanelView() {
+      updateViewModeUI();
+
+      const img = document.getElementById('diff-diagram-img');
+      const svg = document.getElementById('diff-diagram-svg');
+      const empty = document.getElementById('diff-empty-state');
+      const meta = document.getElementById('diff-diagram-meta');
+      const codeBox = document.getElementById('diff-code-container');
+
+      if (activeMainTab === 'changes') {
+        document.getElementById('diff-header-icon').innerText = '🖼️';
+        document.getElementById('diff-header-title').innerText = 'Canvas Diagram Preview';
+        document.getElementById('diff-header-history-actions').style.display = 'none';
+
+        const topNodes = latestCanvasPayload?.document?.children?.[0]?.children || [];
+
+        if (latestCanvasImage) {
+          img.src = latestCanvasImage;
+          img.style.display = 'block';
+          svg.style.display = 'none';
+          empty.style.display = 'none';
+          meta.style.display = 'block';
+          meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} on canvas`;
+        } else if (topNodes.length > 0) {
+          svg.innerHTML = renderNodesToSvg(topNodes);
+          svg.style.display = 'block';
+          img.style.display = 'none';
+          empty.style.display = 'none';
+          meta.style.display = 'block';
+          meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} on canvas`;
+        } else {
+          img.style.display = 'none';
+          svg.style.display = 'none';
+          empty.style.display = 'block';
+          empty.innerHTML = `
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="#3a3b3e" style="margin-bottom: 8px;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5-7l-3 3.72L9 13l-3 4h12l-4-5z"/></svg>
+            <div>Canvas is empty</div>
+            <div style="font-size: 11px; color: #555; margin-top: 4px;">Draw shapes in Figma to see the diagram</div>
+          `;
+          meta.style.display = 'none';
+        }
+
+        if (latestCanvasPayload) {
+          const jsonStr = JSON.stringify(latestCanvasPayload, null, 2);
+          const lines = jsonStr.split('\n').map(l => `<span class="diff-addition">+ ${escapeHtml(l)}</span>`).join('\n');
+          codeBox.innerHTML = lines;
+        } else {
+          codeBox.innerHTML = '<span style="color: #8b949e;">Loading preview...</span>';
+        }
+
+      } else if (activeMainTab === 'history') {
+        const shortSha = selectedCommit ? selectedCommit.sha.substring(0, 7) : '';
+        const msg = selectedCommit ? selectedCommit.commit.message.split('\n')[0] : '';
+        document.getElementById('diff-header-icon').innerText = '📦';
+        document.getElementById('diff-header-title').innerText = selectedCommit ? `${shortSha} • ${msg}` : 'Commit History';
+        document.getElementById('diff-header-history-actions').style.display = 'flex';
+
+        if (selectedCommitDoc) {
+          const topNodes = selectedCommitDoc?.document?.children?.[0]?.children || [];
+          if (selectedCommitDoc.thumbnail) {
+            img.src = selectedCommitDoc.thumbnail;
+            img.style.display = 'block';
+            svg.style.display = 'none';
+            empty.style.display = 'none';
+            meta.style.display = 'block';
+            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha}`;
+          } else if (topNodes.length > 0) {
+            svg.innerHTML = renderNodesToSvg(topNodes);
+            svg.style.display = 'block';
+            img.style.display = 'none';
+            empty.style.display = 'none';
+            meta.style.display = 'block';
+            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha}`;
+          } else {
+            img.style.display = 'none';
+            svg.style.display = 'none';
+            empty.style.display = 'block';
+            empty.innerHTML = '<div>No shapes in this commit</div>';
+            meta.style.display = 'none';
+          }
+
+          const jsonStr = JSON.stringify(selectedCommitDoc, null, 2);
+          const lines = jsonStr.split('\n').map(l => `<span style="color: #9cdcfe;">${escapeHtml(l)}</span>`).join('\n');
+          codeBox.innerHTML = lines;
+        } else {
+          img.style.display = 'none';
+          svg.style.display = 'none';
+          empty.style.display = 'block';
+          empty.innerHTML = '<div style="color: #8b949e;">Select a commit to view diagram</div>';
+          meta.style.display = 'none';
+          codeBox.innerHTML = '<span style="color: #8b949e;">Select a commit</span>';
+        }
+      }
+    }
+
+    // Rollback button listener
+    document.getElementById('btn-detail-rollback').onclick = async () => {
+      if (!selectedCommit || !selectedCommitDoc) return;
+      const shortSha = selectedCommit.sha.substring(0, 7);
+      const msg = selectedCommit.commit.message.split('\n')[0];
+      if (!confirm(`Rollback canvas to "${msg}" (${shortSha})?\n\nThis will REPLACE current canvas content with this historical version.`)) return;
+      const btn = document.getElementById('btn-detail-rollback');
+      btn.innerText = 'Rolling back...';
+      btn.disabled = true;
+      try {
+        parent.postMessage({ pluginMessage: { type: 'pull-from-github', doc: selectedCommitDoc } }, '*');
+      } catch (e) {
+        alert('Rollback failed: ' + e.message);
+      } finally {
+        btn.innerText = '↺ Rollback';
+        btn.disabled = false;
+      }
+    };
+
     // Tab Listeners (Changes vs History)
     document.getElementById('sidebar-tab-changes').onclick = () => {
+      activeMainTab = 'changes';
       document.getElementById('sidebar-tab-changes').classList.add('active');
       document.getElementById('sidebar-tab-history').classList.remove('active');
       document.getElementById('tab-content-changes').style.display = 'flex';
       document.getElementById('tab-content-history').style.display = 'none';
-
-      // Restore Changes diff header and live preview
-      const diffHeader = document.querySelector('.diff-header');
-      if (diffHeader) {
-        diffHeader.innerHTML = '<span style="color: #569cd6; margin-right: 8px;">{ }</span><span>figma-snapshot.json</span>';
-      }
+      updateRightPanelView();
       parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
     };
 
     document.getElementById('sidebar-tab-history').onclick = () => {
+      activeMainTab = 'history';
       document.getElementById('sidebar-tab-history').classList.add('active');
       document.getElementById('sidebar-tab-changes').classList.remove('active');
       document.getElementById('tab-content-changes').style.display = 'none';
@@ -1468,55 +1731,10 @@
     }
 
     // Select and inspect commit in the right pane
-    function selectHistoryCommit(commit) {
-      const shortSha = commit.sha.substring(0, 7);
-      const message = commit.commit.message.split('\n')[0];
-
-      const diffHeader = document.querySelector('.diff-header');
-      if (diffHeader) {
-        diffHeader.innerHTML = `
-          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-            <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; max-width: 55%;">
-              <span style="color: #569cd6; font-family: monospace; font-size: 11px;">${shortSha}</span>
-              <span style="font-weight: 500; color: #e6edf3; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(message)}">${escapeHtml(message)}</span>
-            </div>
-            <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-              <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
-            </div>
-          </div>
-        `;
-
-        const detailRollback = document.getElementById('btn-detail-rollback');
-        if (detailRollback) {
-          detailRollback.onclick = async () => {
-            if (!confirm(`Rollback canvas to "${message}" (${shortSha})?\n\nThis will REPLACE current canvas content with this historical version.`)) return;
-            detailRollback.innerText = 'Rolling back...';
-            detailRollback.disabled = true;
-            try {
-              const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${commit.sha}`;
-              const res = await fetch(url, { headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' } });
-              if (!res.ok) throw new Error('No design snapshot found in this commit.');
-              const data = await res.json();
-              const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
-              const doc = JSON.parse(jsonStr);
-              parent.postMessage({ pluginMessage: { type: 'pull-from-github', doc } }, '*');
-            } catch (e) {
-              alert('Rollback failed: ' + e.message);
-              detailRollback.innerText = '↺ Rollback';
-              detailRollback.disabled = false;
-            }
-          };
-        }
-      }
-
-      loadCommitPreview(commit);
-    }
-
-    // Load preview of a specific commit snapshot
-    async function loadCommitPreview(commit) {
-      const previewEl = document.getElementById('diff-preview');
-      if (!previewEl) return;
-      previewEl.innerHTML = '<span style="color: #8b949e;">Loading commit snapshot...</span>';
+    async function selectHistoryCommit(commit) {
+      selectedCommit = commit;
+      selectedCommitDoc = null;
+      updateRightPanelView();
 
       try {
         const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${commit.sha}`;
@@ -1524,16 +1742,16 @@
           headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' }
         });
         if (!res.ok) {
-          previewEl.innerHTML = '<span style="color: #8b949e;">(No design snapshot was stored in this commit)</span>';
+          selectedCommitDoc = null;
+          updateRightPanelView();
           return;
         }
         const data = await res.json();
         const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
-        const formatted = JSON.stringify(JSON.parse(jsonStr), null, 2);
-        const lines = formatted.split('\n').map(l => `<span style="color: #9cdcfe;">${escapeHtml(l)}</span>`).join('\n');
-        previewEl.innerHTML = lines;
+        selectedCommitDoc = JSON.parse(jsonStr);
+        updateRightPanelView();
       } catch (e) {
-        previewEl.innerHTML = `<span style="color: #f85149;">Failed to load preview: ${escapeHtml(e.message)}</span>`;
+        console.error("Failed to load commit snapshot", e);
       }
     }
 
@@ -1760,10 +1978,11 @@
       
       // Handle live preview from Figma
       if (msg.type === 'preview-payload') {
-        const previewEl = document.getElementById('diff-preview');
-        const jsonStr = JSON.stringify(msg.payload, null, 2);
-        const lines = jsonStr.split('\n').map(line => `<span class="diff-addition">+ ${line}</span>`).join('\n');
-        previewEl.innerHTML = lines;
+        latestCanvasPayload = msg.payload;
+        latestCanvasImage = msg.image;
+        if (activeMainTab === 'changes') {
+          updateRightPanelView();
+        }
       }
       
       // Handle commit execution
