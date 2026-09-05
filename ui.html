@@ -306,6 +306,7 @@
       gap: 8px;
     }
     .btn-item-import {
+      display: none;
       background: #1f6feb;
       border: 1px solid rgba(255, 255, 255, 0.15);
       color: #ffffff;
@@ -314,11 +315,14 @@
       padding: 3px 8px;
       border-radius: 4px;
       cursor: pointer;
-      display: inline-flex;
       align-items: center;
       gap: 4px;
       flex-shrink: 0;
       transition: background 0.15s, transform 0.05s;
+    }
+    .history-item:hover .btn-item-import,
+    .history-item.selected .btn-item-import {
+      display: inline-flex;
     }
     .btn-item-import:hover {
       background: #388bfd;
