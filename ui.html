@@ -334,6 +334,29 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .zoom-btn {
+      background: transparent;
+      border: none;
+      color: #c9d1d9;
+      font-size: 13px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .zoom-btn:hover {
+      background: #2b2d33;
+      color: #ffffff;
+    }
+    .zoom-btn:active {
+      background: #383b42;
+      transform: scale(0.95);
+    }
     .ghd-input {
       width: 100%;
       background-color: #1E1E1E;
@@ -855,17 +878,27 @@
         </div>
 
         <!-- Visual Diagram View (Default) -->
-        <div id="diff-visual-container" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; overflow: auto; background: #141518; position: relative;">
-          <div id="diff-visual-box" style="max-width: 100%; max-height: 100%; display: flex; align-items: center; justify-content: center;">
+        <div id="diff-visual-container" style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; overflow: hidden; background: #141518; position: relative; user-select: none;">
+          <div id="diff-visual-stage" style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; transform-origin: center center; will-change: transform; cursor: grab;">
             <img id="diff-diagram-img" style="max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; box-shadow: 0 8px 32px rgba(0,0,0,0.6); border: 1px solid #2d2e33; display: none;" />
-            <div id="diff-diagram-svg" style="max-width: 100%; max-height: 480px; width: 100%; display: none;"></div>
-            <div id="diff-empty-state" style="color: #8b949e; font-size: 13px; text-align: center;">
+            <div id="diff-diagram-svg" style="max-width: 100%; max-height: 480px; width: 100%; display: none; align-items: center; justify-content: center;"></div>
+            <div id="diff-empty-state" style="color: #8b949e; font-size: 13px; text-align: center; pointer-events: none;">
               <svg width="40" height="40" viewBox="0 0 24 24" fill="#3a3b3e" style="margin-bottom: 8px;"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5-7l-3 3.72L9 13l-3 4h12l-4-5z"/></svg>
               <div>Canvas is empty</div>
               <div style="font-size: 11px; color: #555; margin-top: 4px;">Draw shapes in Figma to see the diagram</div>
             </div>
           </div>
-          <div id="diff-diagram-meta" style="margin-top: 14px; font-size: 11px; color: #8b949e; background: #1e1f23; padding: 3px 12px; border-radius: 12px; border: 1px solid #2d2e33; display: none;"></div>
+          
+          <div id="diff-diagram-meta" style="position: absolute; top: 12px; left: 16px; font-size: 11px; color: #8b949e; background: rgba(30, 31, 35, 0.85); backdrop-filter: blur(4px); padding: 3px 12px; border-radius: 12px; border: 1px solid #2d2e33; display: none; z-index: 5;"></div>
+
+          <!-- Floating Zoom Controls -->
+          <div id="diagram-zoom-controls" style="position: absolute; bottom: 14px; right: 14px; display: none; align-items: center; background: rgba(22, 23, 26, 0.9); backdrop-filter: blur(8px); border: 1px solid #333; border-radius: 6px; padding: 2px 4px; gap: 3px; z-index: 10; box-shadow: 0 4px 16px rgba(0,0,0,0.5);">
+            <button id="btn-zoom-out" class="zoom-btn" title="Zoom Out (−)">−</button>
+            <span id="zoom-level-badge" style="font-size: 11px; color: #c9d1d9; font-weight: 500; min-width: 38px; text-align: center; cursor: pointer; user-select: none;" title="Click to Reset (100%)">100%</span>
+            <button id="btn-zoom-in" class="zoom-btn" title="Zoom In (+)">+</button>
+            <div style="width: 1px; height: 14px; background: #3a3b40; margin: 0 2px;"></div>
+            <button id="btn-zoom-reset" class="zoom-btn" title="Reset Zoom (Fit)" style="font-size: 10px; width: auto; padding: 0 6px;">Fit</button>
+          </div>
         </div>
 
         <!-- Raw JSON Code View -->
@@ -1411,6 +1444,80 @@
       document.getElementById('diff-code-container').style.display = isDiagram ? 'none' : 'block';
     }
 
+    // --- Render View Zoom & Pan State ---
+    let zoomScale = 1;
+    let panX = 0;
+    let panY = 0;
+    let isDraggingStage = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+
+    function applyZoomTransform() {
+      const stage = document.getElementById('diff-visual-stage');
+      const badge = document.getElementById('zoom-level-badge');
+      if (stage) {
+        stage.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
+      }
+      if (badge) {
+        badge.innerText = `${Math.round(zoomScale * 100)}%`;
+      }
+    }
+
+    function setZoom(newScale) {
+      zoomScale = Math.min(5, Math.max(0.2, newScale));
+      applyZoomTransform();
+    }
+
+    function resetZoom() {
+      zoomScale = 1;
+      panX = 0;
+      panY = 0;
+      applyZoomTransform();
+    }
+
+    // Set up Zoom & Pan event listeners
+    const visualContainer = document.getElementById('diff-visual-container');
+    const visualStage = document.getElementById('diff-visual-stage');
+
+    if (visualContainer) {
+      visualContainer.addEventListener('wheel', (e) => {
+        // Zoom with wheel or trackpad pinch
+        e.preventDefault();
+        const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
+        setZoom(zoomScale * zoomFactor);
+      }, { passive: false });
+    }
+
+    if (visualStage) {
+      visualStage.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isDraggingStage = true;
+        dragStartX = e.clientX - panX;
+        dragStartY = e.clientY - panY;
+        visualStage.style.cursor = 'grabbing';
+      });
+    }
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDraggingStage) return;
+      panX = e.clientX - dragStartX;
+      panY = e.clientY - dragStartY;
+      applyZoomTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isDraggingStage) {
+        isDraggingStage = false;
+        const stage = document.getElementById('diff-visual-stage');
+        if (stage) stage.style.cursor = 'grab';
+      }
+    });
+
+    document.getElementById('btn-zoom-in').onclick = (e) => { e.stopPropagation(); setZoom(zoomScale * 1.25); };
+    document.getElementById('btn-zoom-out').onclick = (e) => { e.stopPropagation(); setZoom(zoomScale * 0.8); };
+    document.getElementById('btn-zoom-reset').onclick = (e) => { e.stopPropagation(); resetZoom(); };
+    document.getElementById('zoom-level-badge').onclick = (e) => { e.stopPropagation(); resetZoom(); };
+
     // High-performance visual thumbnail renderer for live canvas and commits
     function renderThumbnailsToSvg(thumbnails) {
       if (!thumbnails || thumbnails.length === 0) return null;
@@ -1592,6 +1699,7 @@
             empty.style.display = 'none';
             meta.style.display = 'block';
             meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} on canvas`;
+            rendered = true;
           } else {
             img.style.display = 'none';
             svg.style.display = 'none';
@@ -1602,8 +1710,12 @@
               <div style="font-size: 11px; color: #555; margin-top: 4px;">Draw shapes in Figma to see the diagram</div>
             `;
             meta.style.display = 'none';
+            resetZoom();
           }
         }
+
+        const zoomControls = document.getElementById('diagram-zoom-controls');
+        if (zoomControls) zoomControls.style.display = (rendered && currentViewMode === 'diagram') ? 'flex' : 'none';
 
         if (currentViewMode === 'code') {
           updateCodeBox(latestCanvasPayload, true);
@@ -1615,9 +1727,9 @@
         document.getElementById('diff-header-title').innerText = selectedCommit ? `${shortSha} • ${msg}` : 'Commit History';
         document.getElementById('diff-header-history-actions').style.display = 'flex';
 
+        let rendered = false;
         if (selectedCommitDoc) {
           const topNodes = selectedCommitDoc?.document?.children?.[0]?.children || [];
-          let rendered = false;
 
           if (selectedCommitDoc.thumbnails && selectedCommitDoc.thumbnails.length > 0) {
             const svgContent = renderThumbnailsToSvg(selectedCommitDoc.thumbnails);
@@ -1641,12 +1753,14 @@
               empty.style.display = 'none';
               meta.style.display = 'block';
               meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha}`;
+              rendered = true;
             } else {
               img.style.display = 'none';
               svg.style.display = 'none';
               empty.style.display = 'block';
               empty.innerHTML = '<div>No shapes in this commit</div>';
               meta.style.display = 'none';
+              resetZoom();
             }
           }
 
@@ -1660,7 +1774,11 @@
           empty.innerHTML = '<div style="color: #8b949e;">Select a commit to view diagram</div>';
           meta.style.display = 'none';
           codeBox.innerHTML = '<span style="color: #8b949e;">Select a commit</span>';
+          resetZoom();
         }
+
+        const zoomControls = document.getElementById('diagram-zoom-controls');
+        if (zoomControls) zoomControls.style.display = (rendered && currentViewMode === 'diagram') ? 'flex' : 'none';
       }
     }
 
@@ -1818,6 +1936,7 @@
     async function selectHistoryCommit(commit) {
       selectedCommit = commit;
       selectedCommitDoc = null;
+      resetZoom();
       updateRightPanelView();
 
       try {
