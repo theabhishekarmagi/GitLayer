@@ -711,8 +711,9 @@
       </div>
       <div class="topbar-spacer"></div>
       
-      <div style="display: flex; align-items: center; margin-right: 16px;">
-        <div id="status-text" style="font-size: 12px; font-weight: normal; color: #aaa; margin-right: 16px;"></div>
+      <div style="display: flex; align-items: center; gap: 12px; margin-right: 16px;">
+        <div id="status-text" style="font-size: 12px; font-weight: normal; color: #aaa; margin-right: 4px;"></div>
+        <button id="btn-pull" style="background: transparent; border: 1px solid #444; color: #c9d1d9; font-size: 12px; padding: 4px 10px; border-radius: 4px; cursor: pointer;" title="Pull design from GitHub and restore on canvas">↓ Pull</button>
         <a href="#" id="btn-logout" style="color: #9E9E9E; font-size: 12px; text-decoration: none;">Sign out</a>
       </div>
       
@@ -1018,6 +1019,41 @@
       currentBranch = 'main';
       parent.postMessage({ pluginMessage: { type: 'logout' } }, '*');
       showScreen('screen-1');
+    });
+
+    // Pull button — fetch snapshot from GitHub and send to code.ts for reconstruction
+    document.getElementById('btn-pull').addEventListener('click', async () => {
+      const btn = document.getElementById('btn-pull');
+      const status = document.getElementById('status-text');
+      if (!currentPat || !currentRepo) {
+        status.innerText = 'No repo connected.'; status.style.color = '#f14c4c'; return;
+      }
+      btn.disabled = true;
+      btn.innerText = 'Pulling...';
+      status.innerText = 'Fetching snapshot from GitHub...';
+      status.style.color = '#aaa';
+
+      try {
+        // 1. Fetch figma-snapshot.json from GitHub
+        const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${currentBranch}`;
+        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' } });
+        if (!res.ok) throw new Error((await res.json()).message || 'File not found on GitHub');
+        const data = await res.json();
+
+        // 2. Decode the base64 content
+        const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
+        const doc = JSON.parse(jsonStr);
+
+        status.innerText = 'Reconstructing design on canvas...';
+        // 3. Send to code.ts deserializer
+        parent.postMessage({ pluginMessage: { type: 'pull-from-github', doc } }, '*');
+
+      } catch (e) {
+        status.innerText = '❌ Pull failed: ' + e.message;
+        status.style.color = '#f14c4c';
+        btn.disabled = false;
+        btn.innerText = '↓ Pull';
+      }
     });
 
     // --- Dropdown UI Logic ---
@@ -1533,51 +1569,57 @@
         previewEl.innerHTML = lines;
       }
       
-      // Handle commit execution
+      // Handle commit execution — uses Figma REST API for full fidelity
       if (msg.type === 'commit-payload') {
         const isMin = msg.source === 'min';
         const status = isMin ? document.getElementById('min-status-text') : document.getElementById('status-text');
-        status.innerText = 'Pushing to GitHub...';
-        
+        status.innerText = 'Fetching design from Figma API...';
+        status.style.color = '#aaa';
+
         try {
-          const { pat, repo, branch, payload, message } = msg;
-          const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+          const { pat, repo, branch, fileKey, message } = msg;
+
+          if (!fileKey) throw new Error('File key not available. Make sure you are inside a Figma file.');
+
+          // Step 1: Fetch the full file from Figma REST API
+          status.innerText = 'Fetching full design data...';
+          const figmaRes = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
+            headers: { 'X-Figma-Token': pat }
+          });
+          if (!figmaRes.ok) {
+            const fe = await figmaRes.json();
+            throw new Error(`Figma API error: ${fe.err || fe.status}`);
+          }
+          const figmaDoc = await figmaRes.json();
+
+          // Step 2: Store the full Figma document JSON to GitHub
+          status.innerText = 'Pushing to GitHub...';
+          const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(figmaDoc, null, 2))));
           const url = `https://api.github.com/repos/${repo}/contents/figma-snapshot.json`;
           let sha = null;
-          
+
           try {
             const getRes = await fetch(`${url}?ref=${branch || 'main'}`, { headers: { 'Authorization': `Bearer ${pat}` } });
-            if (getRes.ok) {
-              const getData = await getRes.json();
-              sha = getData.sha;
-            }
-          } catch (e) { }
+            if (getRes.ok) sha = (await getRes.json()).sha;
+          } catch (e) {}
 
-          const body = { message, content: contentBase64, branch: branch || 'main' };
+          const body: any = { message, content: contentBase64, branch: branch || 'main' };
           if (sha) body.sha = sha;
 
           const res = await fetch(url, {
             method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${pat}`,
-              'Content-Type': 'application/json',
-              'Accept': 'application/vnd.github.v3+json'
-            },
+            headers: { 'Authorization': `Bearer ${pat}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
             body: JSON.stringify(body)
           });
 
           if (res.ok) {
             status.innerText = 'Commit successful! 🎉';
-            status.style.color = '#89d185'; // Success green
+            status.style.color = '#89d185';
             if (isMin) {
               document.getElementById('min-commit-summary').value = '';
               document.getElementById('min-commit-desc').value = '';
               document.getElementById('btn-min-push').disabled = false;
-              // Auto collapse popover after successful commit in minimized view
-              setTimeout(() => {
-                document.getElementById('btn-min-toggle-commit').click();
-                status.innerText = '';
-              }, 1500);
+              setTimeout(() => { document.getElementById('btn-min-toggle-commit').click(); status.innerText = ''; }, 1500);
             } else {
               document.getElementById('commit-summary').value = '';
               document.getElementById('commit-desc').value = '';
@@ -1585,17 +1627,35 @@
             }
           } else {
             const error = await res.json();
-            status.innerText = 'Error: ' + error.message;
-            status.style.color = '#f14c4c';
-            if(isMin) document.getElementById('btn-min-push').disabled = false;
-            else document.getElementById('commit-btn').disabled = false;
+            throw new Error(error.message || 'GitHub push failed');
           }
         } catch (e) {
-          status.innerText = 'Network Error.';
+          status.innerText = 'Error: ' + e.message;
           status.style.color = '#f14c4c';
-          if(isMin) document.getElementById('btn-min-push').disabled = false;
+          if (isMin) document.getElementById('btn-min-push').disabled = false;
           else document.getElementById('commit-btn').disabled = false;
         }
+      }
+
+      // Pull: fetch snapshot from GitHub and reconstruct on canvas
+      if (msg.type === 'pull-progress') {
+        const status = document.getElementById('status-text');
+        if (status) { status.innerText = msg.message; status.style.color = '#aaa'; }
+      }
+
+      if (msg.type === 'pull-success') {
+        const status = document.getElementById('status-text');
+        if (status) { status.innerText = `✅ Pulled ${msg.count} nodes to canvas!`; status.style.color = '#89d185'; }
+        document.getElementById('btn-pull')?.setAttribute('disabled', 'false');
+        document.getElementById('btn-pull').disabled = false;
+        document.getElementById('btn-pull').innerText = '↓ Pull';
+      }
+
+      if (msg.type === 'pull-error') {
+        const status = document.getElementById('status-text');
+        if (status) { status.innerText = '❌ Pull failed: ' + msg.message; status.style.color = '#f14c4c'; }
+        const pullBtn = document.getElementById('btn-pull');
+        if (pullBtn) { pullBtn.disabled = false; pullBtn.innerText = '↓ Pull'; }
       }
     };
   </script>
