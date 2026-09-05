@@ -16,16 +16,7 @@
     
     /* Onboarding styles */
     .header-onboarding {
-      background-color: #2F333D;
-      color: white;
-      padding: 14px 16px;
-      font-weight: 600;
-      font-size: 15px;
-      width: 100%;
-      box-sizing: border-box;
-      position: absolute;
-      top: 0;
-      left: 0;
+      display: none;
     }
     .container {
       flex: 1;
@@ -35,52 +26,57 @@
       justify-content: center;
       padding: 24px;
       text-align: center;
-      background-color: white; /* White background only for onboarding */
+      background-color: #222327; /* Dark background */
       height: 100vh;
+      color: #E1E4E8;
     }
     .github-logo {
       width: 72px;
       height: 72px;
       margin-bottom: 24px;
+      fill: #FFF;
     }
-    .btn-connect {
-      background-color: #D9D9D9;
-      color: #000;
-      border: none;
-      border-radius: 24px;
-      padding: 10px 24px;
+    .btn-connect, .btn-submit {
+      background-color: #238636; /* GitHub Green */
+      color: #FFF;
+      border: 1px solid rgba(240, 246, 252, 0.1);
+      border-radius: 6px;
+      padding: 8px 16px;
       font-size: 14px;
       cursor: pointer;
       font-weight: 500;
       width: 100%;
-      max-width: 220px;
+      max-width: 260px;
+    }
+    .btn-connect:hover, .btn-submit:hover {
+      background-color: #2EA043;
     }
     .label-text {
       font-size: 14px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #E1E4E8;
+      text-align: left;
+      width: 100%;
+      max-width: 260px;
     }
     .input-pill {
-      background-color: #D9D9D9;
-      border: none;
-      border-radius: 24px;
-      padding: 12px 16px;
+      background-color: #0D1117;
+      border: 1px solid #30363D;
+      border-radius: 6px;
+      padding: 8px 12px;
       font-size: 14px;
+      color: #E1E4E8;
       width: 100%;
       max-width: 260px;
       box-sizing: border-box;
       margin-bottom: 20px;
-      text-align: center;
+      text-align: left;
       outline: none;
     }
-    .btn-submit {
-      background-color: #1E2128;
-      color: white;
-      border: none;
-      border-radius: 24px;
-      padding: 10px 32px;
-      font-size: 14px;
-      cursor: pointer;
-      font-weight: 500;
+    .input-pill:focus {
+      border-color: #58A6FF;
+      box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.3);
     }
 
     /* Screen toggling */
@@ -477,31 +473,31 @@
       <div class="label-text">Paste your Token</div>
       <input type="password" id="pat" class="input-pill" />
       <button id="btn-submit-token" class="btn-submit">Submit</button>
-      <div id="token-error" style="color: #D21C1C; display: none; font-size: 13px; margin-top: 12px; font-weight: 500;"></div>
+      <div id="token-error" style="color: #F85149; display: none; font-size: 13px; margin-top: 12px; font-weight: 500;"></div>
     </div>
     
     <!-- Screen 2.5: Repo Selection -->
     <div id="screen-repo-select" class="screen screen-center">
-      <div style="font-size: 16px; font-weight: 600; margin-bottom: 8px;">Repository Setup</div>
-      <p style="font-size: 12px; color: #666; margin-bottom: 24px;">Connect this Figma file to a GitHub repository.</p>
+      <div style="font-size: 20px; font-weight: 600; margin-bottom: 8px;">Repository Setup</div>
+      <p style="font-size: 13px; color: #8B949E; margin-bottom: 24px;">Connect this Figma file to a GitHub repository.</p>
       
-      <div style="width: 100%; text-align: left; margin-bottom: 20px;">
-        <label class="label-text" style="font-weight: 600;">Use Existing Repository</label>
-        <select id="existing-repos" class="input-pill" style="margin-bottom: 12px; padding-left: 12px; text-align: left; background-color: #f6f8fa; border: 1px solid #d0d7de;">
+      <div style="width: 100%; text-align: left; margin-bottom: 20px; max-width: 260px;">
+        <label class="label-text" style="display: block;">Use Existing Repository</label>
+        <select id="existing-repos" class="input-pill" style="margin-bottom: 12px; appearance: none; -webkit-appearance: none; background-image: url('data:image/svg+xml;utf8,<svg fill=%22%23E1E4E8%22 height=%2224%22 viewBox=%220 0 24 24%22 width=%2224%22 xmlns=%22http://www.w3.org/2000/svg%22><path d=%22M7 10l5 5 5-5z%22/><path d=%22M0 0h24v24H0z%22 fill=%22none%22/></svg>'); background-repeat: no-repeat; background-position: right 8px center;">
           <option value="">Loading repos...</option>
         </select>
-        <button id="btn-use-existing" class="btn-connect" style="width: 100%; max-width: 100%; background-color: #24292f; color: white;">Connect</button>
+        <button id="btn-use-existing" class="btn-connect" style="background-color: #21262D; border: 1px solid rgba(240, 246, 252, 0.1);">Connect</button>
       </div>
       
-      <div style="font-size: 12px; color: #888; margin-bottom: 20px;">— OR —</div>
+      <div style="font-size: 12px; color: #8B949E; margin-bottom: 20px;">— OR —</div>
       
-      <div style="width: 100%; text-align: left;">
-        <label class="label-text" style="font-weight: 600;">Create New Repository</label>
-        <input type="text" id="new-repo-name" class="input-pill" placeholder="e.g., figma-designs" style="margin-bottom: 12px; padding-left: 12px; text-align: left; background-color: #f6f8fa; border: 1px solid #d0d7de;" />
-        <button id="btn-create-repo" class="btn-connect" style="width: 100%; max-width: 100%; background-color: #2da44e; color: white;">Create & Connect</button>
+      <div style="width: 100%; text-align: left; max-width: 260px;">
+        <label class="label-text" style="display: block;">Create New Repository</label>
+        <input type="text" id="new-repo-name" class="input-pill" placeholder="e.g., figma-designs" style="margin-bottom: 12px;" />
+        <button id="btn-create-repo" class="btn-connect">Create & Connect</button>
       </div>
 
-      <div id="repo-error" style="color: #D21C1C; display: none; font-size: 13px; margin-top: 16px; font-weight: 500; text-align: center;"></div>
+      <div id="repo-error" style="color: #F85149; display: none; font-size: 13px; margin-top: 16px; font-weight: 500; text-align: center;"></div>
     </div>
   </div>
 
