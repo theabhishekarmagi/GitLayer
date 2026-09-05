@@ -449,6 +449,92 @@
       background: #3D3E42;
       color: #FFF;
     }
+
+    /* Modals */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active {
+      display: flex;
+    }
+    .modal-box {
+      background: #222327;
+      border: 1px solid #1E1E1E;
+      border-radius: 6px;
+      width: 450px;
+      max-width: 90vw;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      padding: 16px;
+      border-bottom: 1px solid #1E1E1E;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 600;
+      color: #E1E4E8;
+    }
+    .modal-close {
+      cursor: pointer;
+      color: #888;
+      background: none;
+      border: none;
+    }
+    .modal-close:hover {
+      color: #FFF;
+    }
+    .modal-body {
+      padding: 16px;
+      text-align: left;
+    }
+    .modal-footer {
+      padding: 16px;
+      border-top: 1px solid #1E1E1E;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .btn-modal-cancel {
+      background: transparent;
+      border: 1px solid #555;
+      color: #E1E4E8;
+      padding: 6px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .btn-modal-cancel:hover {
+      background: #333;
+    }
+    .btn-modal-primary {
+      background: #1f6feb; /* GitHub Action Blue */
+      border: 1px solid rgba(240, 246, 252, 0.1);
+      color: #FFF;
+      padding: 6px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .btn-modal-primary:hover {
+      background: #388bfd;
+    }
+    .code-pill {
+      background: rgba(255, 255, 255, 0.15);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #FFF;
+    }
   </style>
 </head>
 <body>
@@ -647,6 +733,29 @@
         <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M5 3.254V3.25v.005a.75.75 0 110-.005v.005a.75.75 0 010-.005zm7.75 1.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-8.5.75a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm7 7a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zM5.75 10.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-.75.75a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm4.25-6.5a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm2.25.75a.75.75 0 100 1.5.75.75 0 000-1.5z"></path></svg>
         Choose a branch to merge into <strong id="merge-target-branch">main</strong>
       </button>
+    </div>
+  </div>
+
+  <!-- Create Branch Modal -->
+  <div id="modal-create-branch" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>Create a Branch</span>
+        <button class="modal-close" onclick="closeModal('modal-create-branch')">✕</button>
+      </div>
+      <div class="modal-body">
+        <label style="display: block; font-size: 13px; margin-bottom: 6px; color: #E1E4E8;">Name</label>
+        <input type="text" id="new-branch-input" class="input-pill" style="max-width: 100%; margin-bottom: 16px;" />
+        <p style="font-size: 13px; color: #E1E4E8; line-height: 1.5; margin: 0;">
+          Your new branch will be based on your currently checked out branch (<span class="code-pill" id="new-branch-base">main</span>). 
+          <span class="code-pill" id="new-branch-base-2">main</span> is the <a href="#" style="color: #58A6FF; text-decoration: none;">default branch</a> for your repository.
+        </p>
+        <div id="new-branch-error" style="color: #F85149; margin-top: 12px; font-size: 12px; display: none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-modal-cancel" onclick="closeModal('modal-create-branch')">Cancel</button>
+        <button class="btn-modal-primary" id="btn-submit-new-branch">Create Branch</button>
+      </div>
     </div>
   </div>
 
@@ -1015,18 +1124,58 @@
       }
     }
 
+    // Modal Logic
+    function openModal(id) {
+      document.getElementById(id).classList.add('active');
+    }
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('active');
+    }
+
+    // Tab Listeners (Branches vs Pull Requests)
+    const branchTabs = document.querySelectorAll('#branch-dropdown .dropdown-tab');
+    branchTabs.forEach(tab => {
+      tab.onclick = () => {
+        branchTabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const list = document.getElementById('branch-dropdown-list');
+        const searchRow = document.querySelector('#branch-dropdown .dropdown-search-row');
+        
+        if (tab.innerText === 'Pull Requests') {
+          list.innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">No pull requests found.</div>';
+          searchRow.style.display = 'none';
+        } else {
+          searchRow.style.display = 'flex';
+          renderBranchDropdown(document.getElementById('branch-filter').value);
+        }
+      };
+    });
+
     // Create New Branch API
-    document.getElementById('btn-new-branch').addEventListener('click', async () => {
-      const newName = prompt('Enter new branch name:');
-      if (!newName) return;
+    document.getElementById('btn-new-branch').addEventListener('click', () => {
+      closeDropdowns();
+      const defaultBranchName = currentRepo ? (cachedRepos.find(r => r.full_name === currentRepo)?.default_branch || 'main') : 'main';
+      document.getElementById('new-branch-base').innerText = currentBranch;
+      document.getElementById('new-branch-base-2').innerText = defaultBranchName;
+      document.getElementById('new-branch-input').value = '';
+      document.getElementById('new-branch-error').style.display = 'none';
+      openModal('modal-create-branch');
+      setTimeout(() => document.getElementById('new-branch-input').focus(), 100);
+    });
+
+    document.getElementById('btn-submit-new-branch').addEventListener('click', async () => {
+      const name = document.getElementById('new-branch-input').value.trim();
+      const err = document.getElementById('new-branch-error');
+      if (!name) return;
       
-      // Find SHA of current branch
-      const current = cachedBranches.find(b => b.name === currentBranch);
-      if (!current) return alert("Error determining current branch SHA.");
-      
-      document.getElementById('branch-dropdown-list').innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">Creating...</div>';
-      
+      const btn = document.getElementById('btn-submit-new-branch');
+      btn.innerText = 'Creating...';
+      btn.disabled = true;
+
       try {
+        const current = cachedBranches.find(b => b.name === currentBranch);
+        if (!current) throw new Error("Error determining current branch SHA.");
+
         const res = await fetch(`https://api.github.com/repos/${currentRepo}/git/refs`, {
           method: 'POST',
           headers: {
@@ -1035,24 +1184,27 @@
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            ref: `refs/heads/${newName}`,
+            ref: `refs/heads/${name}`,
             sha: current.commit.sha
           })
         });
+        
         if (res.ok) {
-          currentBranch = newName;
+          currentBranch = name;
           updateTopbarUI();
           parent.postMessage({ pluginMessage: { type: 'save-repo', repo: currentRepo, branch: currentBranch } }, '*');
-          closeDropdowns();
+          closeModal('modal-create-branch');
           fetchBranches(); // refresh
         } else {
-          const err = await res.json();
-          alert(`Failed to create branch: ${err.message}`);
-          renderBranchDropdown();
+          const e = await res.json();
+          throw new Error(e.message || 'Error creating branch');
         }
-      } catch (err) {
-        alert("Network error creating branch.");
-        renderBranchDropdown();
+      } catch (e) {
+        err.innerText = e.message;
+        err.style.display = 'block';
+      } finally {
+        btn.innerText = 'Create Branch';
+        btn.disabled = false;
       }
     });
 
