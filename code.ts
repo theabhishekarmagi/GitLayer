@@ -198,63 +198,12 @@ if (figma.editorType === 'figma') {
     };
   }
 
-  let isExportingThumbnail = false;
-
-  async function generateCanvasThumbnail(): Promise<string | null> {
-    const page = figma.currentPage;
-    if (page.children.length === 0) return null;
-
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    let count = 0;
-    for (const child of page.children) {
-      if ('x' in child && 'y' in child && 'width' in child && 'height' in child) {
-        minX = Math.min(minX, child.x);
-        minY = Math.min(minY, child.y);
-        maxX = Math.max(maxX, child.x + child.width);
-        maxY = Math.max(maxY, child.y + child.height);
-        count++;
-      }
-    }
-    if (count === 0 || !isFinite(minX)) return null;
-
-    const width = Math.max(20, maxX - minX);
-    const height = Math.max(20, maxY - minY);
-
-    const pad = 30;
-    isExportingThumbnail = true;
-    const slice = figma.createSlice();
-    slice.x = minX - pad;
-    slice.y = minY - pad;
-    slice.resize(width + pad * 2, height + pad * 2);
-
-    try {
-      const maxDim = Math.max(width, height);
-      const scale = maxDim > 800 ? 800 / maxDim : 1;
-      const safeScale = Math.min(1, Math.max(0.01, scale));
-      const bytes = await slice.exportAsync({
-        format: 'PNG',
-        constraint: { type: 'SCALE', value: safeScale }
-      });
-      slice.remove();
-      const base64 = figma.base64Encode(bytes);
-      return `data:image/png;base64,${base64}`;
-    } catch (err) {
-      try { slice.remove(); } catch {}
-      console.error('[GitLayer] Failed to export thumbnail slice', err);
-      return null;
-    } finally {
-      isExportingThumbnail = false;
-    }
-  }
-
-  async function sendPreview() {
+  function sendPreview() {
     try {
       const payload = serializeCurrentPage();
-      const image = await generateCanvasThumbnail();
       figma.ui.postMessage({
         type: 'preview-payload',
-        payload: payload,
-        image: image
+        payload: payload
       });
     } catch (e) {
       console.error('[GitLayer] Failed to send preview payload', e);
@@ -680,7 +629,6 @@ if (figma.editorType === 'figma') {
       await figma.loadAllPagesAsync();
       let previewTimeout: ReturnType<typeof setTimeout> | null = null;
       figma.on('documentchange', () => {
-        if (isExportingThumbnail) return;
         if (previewTimeout !== null) clearTimeout(previewTimeout);
         previewTimeout = setTimeout(() => {
           sendPreview();
@@ -712,10 +660,6 @@ if (figma.editorType === 'figma') {
       sendPreview();
     } else if (msg.type === 'serialize-and-commit') {
       const payload = serializeCurrentPage();
-      const thumbnail = await generateCanvasThumbnail();
-      if (thumbnail) {
-        (payload as any).thumbnail = thumbnail;
-      }
       figma.ui.postMessage({
         type: 'commit-payload',
         pat: msg.pat,

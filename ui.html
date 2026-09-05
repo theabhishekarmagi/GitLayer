@@ -1464,19 +1464,26 @@
         }
 
         const r = n.cornerRadius || 0;
-        let childrenSvg = '';
-        if (n.children && n.children.length > 0) {
-          childrenSvg = n.children.map(renderNode).join('');
-        }
 
         if (n.type === 'TEXT') {
           const fs = n.style?.fontSize || n.fontSize || 14;
-          return `<text x="${x}" y="${y + fs}" fill="${fill}" fill-opacity="${fillOpacity}" font-size="${fs}" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="${(n.style?.fontWeight || 400) >= 700 ? 'bold' : 'normal'}">${escapeHtml(n.characters || '')}</text>`;
+          return `<text x="${x}" y="${y + fs * 0.9}" fill="${fill === '#383b42' ? '#e6edf3' : fill}" fill-opacity="${fillOpacity}" font-size="${fs}" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-weight="${(n.style?.fontWeight || 400) >= 700 ? 'bold' : 'normal'}">${escapeHtml(n.characters || '')}</text>`;
         }
         if (n.type === 'ELLIPSE') {
-          return `<ellipse cx="${x + w/2}" cy="${y + h/2}" rx="${w/2}" ry="${h/2}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}" />${childrenSvg}`;
+          return `<ellipse cx="${x + w/2}" cy="${y + h/2}" rx="${w/2}" ry="${h/2}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}" />`;
         }
-        return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}" />${childrenSvg}`;
+
+        if (n.children && n.children.length > 0) {
+          const innerSvg = n.children.map(c => renderNode(c)).join('');
+          return `
+            <g transform="translate(${x}, ${y})">
+              <rect x="0" y="0" width="${w}" height="${h}" rx="${r}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}" />
+              ${innerSvg}
+            </g>
+          `;
+        }
+
+        return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}" />`;
       }
 
       const elements = nodes.map(renderNode).join('');
@@ -1500,14 +1507,7 @@
 
         const topNodes = latestCanvasPayload?.document?.children?.[0]?.children || [];
 
-        if (latestCanvasImage) {
-          img.src = latestCanvasImage;
-          img.style.display = 'block';
-          svg.style.display = 'none';
-          empty.style.display = 'none';
-          meta.style.display = 'block';
-          meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} on canvas`;
-        } else if (topNodes.length > 0) {
+        if (topNodes.length > 0) {
           svg.innerHTML = renderNodesToSvg(topNodes);
           svg.style.display = 'block';
           img.style.display = 'none';
@@ -1543,14 +1543,7 @@
 
         if (selectedCommitDoc) {
           const topNodes = selectedCommitDoc?.document?.children?.[0]?.children || [];
-          if (selectedCommitDoc.thumbnail) {
-            img.src = selectedCommitDoc.thumbnail;
-            img.style.display = 'block';
-            svg.style.display = 'none';
-            empty.style.display = 'none';
-            meta.style.display = 'block';
-            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha}`;
-          } else if (topNodes.length > 0) {
+          if (topNodes.length > 0) {
             svg.innerHTML = renderNodesToSvg(topNodes);
             svg.style.display = 'block';
             img.style.display = 'none';
