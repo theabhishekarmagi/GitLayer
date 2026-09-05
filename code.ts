@@ -30,13 +30,21 @@ if (figma.editorType === 'figma') {
     // Fills
     if ('fills' in node && Array.isArray(node.fills)) {
       data.fills = (node.fills as ReadonlyArray<Paint>).map((fill) => {
-        if (fill.type === 'SOLID') {
+        if (fill.type === 'SOLID' && fill.color) {
           return {
             type: 'SOLID',
             color: { r: fill.color.r, g: fill.color.g, b: fill.color.b },
             opacity: fill.opacity ?? 1,
             visible: fill.visible ?? true,
             blendMode: fill.blendMode ?? 'NORMAL'
+          };
+        } else if (fill.type === 'IMAGE' && (fill as ImagePaint).imageHash) {
+          return {
+            type: 'IMAGE',
+            imageHash: (fill as ImagePaint).imageHash,
+            scaleMode: (fill as ImagePaint).scaleMode,
+            opacity: fill.opacity ?? 1,
+            visible: fill.visible ?? true
           };
         } else if (fill.type.startsWith('GRADIENT')) {
           const gf = fill as GradientPaint;
@@ -45,7 +53,7 @@ if (figma.editorType === 'figma') {
             gradientTransform: gf.gradientTransform,
             gradientStops: (gf.gradientStops || []).map(s => ({
               position: s.position,
-              color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 }
+              color: s.color ? { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 } : { r: 0, g: 0, b: 0, a: 1 }
             })),
             opacity: gf.opacity ?? 1,
             visible: gf.visible ?? true
@@ -93,20 +101,20 @@ if (figma.editorType === 'figma') {
     // Effects (shadows, blur)
     if ('effects' in node && Array.isArray(node.effects)) {
       data.effects = (node.effects as ReadonlyArray<Effect>).map((eff) => {
-        if (eff.type === 'DROP_SHADOW' || eff.type === 'INNER_SHADOW') {
+        if ((eff.type === 'DROP_SHADOW' || eff.type === 'INNER_SHADOW') && eff.color) {
           return {
             type: eff.type,
             color: { r: eff.color.r, g: eff.color.g, b: eff.color.b, a: eff.color.a ?? 1 },
-            offset: { x: eff.offset.x, y: eff.offset.y },
-            radius: eff.radius,
-            spread: eff.spread,
-            visible: eff.visible
+            offset: { x: eff.offset?.x ?? 0, y: eff.offset?.y ?? 0 },
+            radius: eff.radius ?? 0,
+            spread: eff.spread ?? 0,
+            visible: eff.visible ?? true
           };
         } else if (eff.type === 'LAYER_BLUR' || eff.type === 'BACKGROUND_BLUR') {
           return {
             type: eff.type,
-            radius: eff.radius,
-            visible: eff.visible
+            radius: eff.radius ?? 0,
+            visible: eff.visible ?? true
           };
         }
         return { type: eff.type };
@@ -140,13 +148,23 @@ if (figma.editorType === 'figma') {
     // Text properties
     if (node.type === 'TEXT') {
       const tn = node as TextNode;
-      data.characters = tn.characters;
-      const font = tn.fontName !== figma.mixed ? (tn.fontName as FontName) : { family: 'Inter', style: 'Regular' };
-      const fontSize = tn.fontSize !== figma.mixed ? tn.fontSize : 14;
+      data.characters = tn.characters || '';
+      let isBold = false;
+      let isItalic = false;
+      let family = 'Inter';
+      try {
+        if (tn.fontName !== figma.mixed && tn.fontName && typeof tn.fontName === 'object') {
+          family = tn.fontName.family || 'Inter';
+          const style = (tn.fontName.style || '').toLowerCase();
+          isBold = style.includes('bold');
+          isItalic = style.includes('italic');
+        }
+      } catch {}
+      const fontSize = tn.fontSize !== figma.mixed && typeof tn.fontSize === 'number' ? tn.fontSize : 14;
       data.style = {
-        fontFamily: font.family,
-        fontWeight: font.style.toLowerCase().includes('bold') ? 700 : 400,
-        italic: font.style.toLowerCase().includes('italic'),
+        fontFamily: family,
+        fontWeight: isBold ? 700 : 400,
+        italic: isItalic,
         fontSize: fontSize,
         textAlignHorizontal: tn.textAlignHorizontal,
         textAlignVertical: tn.textAlignVertical,
@@ -198,15 +216,68 @@ if (figma.editorType === 'figma') {
     };
   }
 
-  function sendPreview() {
+  async function generateVisualPreview(): Promise<any[] | null> {
+    const page = figma.currentPage;
+    const children = page.children;
+    if (!children || children.length === 0) return null;
+
+    // Filter to visible top-level nodes (up to 30 nodes)
+    const exportTargets = children.filter(c => c.visible !== false).slice(0, 30);
+    if (exportTargets.length === 0) return null;
+
+    try {
+      const thumbnails = await Promise.all(
+        exportTargets.map(async (child) => {
+          if (!('x' in child && 'y' in child && 'width' in child && 'height' in child)) {
+            return null;
+          }
+          if (child.width <= 0 || child.height <= 0) return null;
+          try {
+            const maxDim = Math.max(child.width, child.height);
+            const scale = maxDim > 800 ? 800 / maxDim : 1;
+            const bytes = await child.exportAsync({
+              format: 'PNG',
+              constraint: { type: 'SCALE', value: Math.max(0.05, Math.min(1, scale)) }
+            });
+            const base64 = figma.base64Encode(bytes);
+            return {
+              id: child.id,
+              name: child.name,
+              x: child.x,
+              y: child.y,
+              width: child.width,
+              height: child.height,
+              dataUrl: `data:image/png;base64,${base64}`
+            };
+          } catch (e) {
+            return null;
+          }
+        })
+      );
+      const valid = thumbnails.filter(Boolean);
+      return valid.length > 0 ? valid : null;
+    } catch (e) {
+      console.error('[GitLayer] Failed to export visual thumbnails', e);
+      return null;
+    }
+  }
+
+  let isSendingPreview = false;
+  async function sendPreview() {
+    if (isSendingPreview) return;
+    isSendingPreview = true;
     try {
       const payload = serializeCurrentPage();
+      const thumbnails = await generateVisualPreview();
       figma.ui.postMessage({
         type: 'preview-payload',
-        payload: payload
+        payload: payload,
+        thumbnails: thumbnails
       });
     } catch (e) {
       console.error('[GitLayer] Failed to send preview payload', e);
+    } finally {
+      isSendingPreview = false;
     }
   }
 
@@ -660,6 +731,10 @@ if (figma.editorType === 'figma') {
       sendPreview();
     } else if (msg.type === 'serialize-and-commit') {
       const payload = serializeCurrentPage();
+      const thumbnails = await generateVisualPreview();
+      if (thumbnails) {
+        (payload as any).thumbnails = thumbnails;
+      }
       figma.ui.postMessage({
         type: 'commit-payload',
         pat: msg.pat,
