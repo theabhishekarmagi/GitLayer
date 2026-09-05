@@ -229,6 +229,8 @@ if (figma.editorType === 'figma') {
         };
     }
     let isExportingCanvasPreview = false;
+    let suppressDocumentChangeUntil = 0;
+    const gitlayerInternalNodeIds = new Set();
     async function exportActiveCanvasArtifacts() {
         const page = figma.currentPage;
         if (!page || !page.children || page.children.length === 0) {
@@ -240,6 +242,7 @@ if (figma.editorType === 'figma') {
                 if (child.name === '__gitlayer_temp_canvas_export__' ||
                     child.name.startsWith('__gitlayer_temp_') ||
                     child.getPluginData('gitlayer_temp_frame') === 'true') {
+                    gitlayerInternalNodeIds.add(child.id);
                     child.remove();
                 }
             }
@@ -254,14 +257,45 @@ if (figma.editorType === 'figma') {
         if (exportTargets.length === 0) {
             return { pdfBase64: null, dataUrl: null };
         }
+        // FAST PATH: If there is a single export target, export directly without creating or modifying canvas nodes!
+        // This avoids document mutations and sidebar layer list updates completely.
+        if (exportTargets.length === 1 && typeof exportTargets[0].exportAsync === 'function') {
+            try {
+                const singleTarget = exportTargets[0];
+                const pdfBytes = await singleTarget.exportAsync({ format: 'PDF' });
+                let pdfBase64 = null;
+                if (pdfBytes && pdfBytes.length > 0) {
+                    pdfBase64 = figma.base64Encode(pdfBytes);
+                }
+                let dataUrl = null;
+                if (!pdfBase64) {
+                    try {
+                        const pngBytes = await singleTarget.exportAsync({
+                            format: 'PNG',
+                            constraint: { type: 'SCALE', value: 2 }
+                        });
+                        if (pngBytes && pngBytes.length > 0) {
+                            dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
+                        }
+                    }
+                    catch { }
+                }
+                return { pdfBase64, dataUrl };
+            }
+            catch (singleErr) {
+                console.warn('[GitLayer] Single target export failed, falling back to temp frame', singleErr);
+            }
+        }
         isExportingCanvasPreview = true;
         let tempFrame = null;
         try {
             tempFrame = figma.createFrame();
             tempFrame.name = '__gitlayer_temp_canvas_export__';
+            gitlayerInternalNodeIds.add(tempFrame.id);
             tempFrame.setPluginData('gitlayer_temp_frame', 'true');
             tempFrame.setPluginData('gitlayer_preview', 'true');
-            tempFrame.visible = false;
+            // NOTE: DO NOT set tempFrame.visible = false! Figma C++ export engine will fail with
+            // "This node may not have any visible layers". Instead, place it far off-screen.
             tempFrame.x = -999999;
             tempFrame.y = -999999;
             tempFrame.fills = [];
@@ -283,6 +317,7 @@ if (figma.editorType === 'figma') {
             for (const t of exportTargets) {
                 try {
                     const clone = t.clone();
+                    gitlayerInternalNodeIds.add(clone.id);
                     clone.x = t.x - minX + pad;
                     clone.y = t.y - minY + pad;
                     tempFrame.appendChild(clone);
@@ -332,10 +367,12 @@ if (figma.editorType === 'figma') {
         finally {
             if (tempFrame) {
                 try {
+                    gitlayerInternalNodeIds.add(tempFrame.id);
                     tempFrame.remove();
                 }
                 catch { }
             }
+            suppressDocumentChangeUntil = Date.now() + 2500;
             isExportingCanvasPreview = false;
         }
     }
@@ -985,9 +1022,11 @@ if (figma.editorType === 'figma') {
             catch { }
             tempFrame = figma.createFrame();
             tempFrame.name = '__gitlayer_temp_render__';
+            gitlayerInternalNodeIds.add(tempFrame.id);
             tempFrame.setPluginData('gitlayer_temp_frame', 'true');
             tempFrame.setPluginData('gitlayer_preview', 'true');
-            tempFrame.visible = false;
+            // NOTE: DO NOT set tempFrame.visible = false! Figma C++ export engine requires visible = true to export.
+            // Instead, place it far off-screen.
             tempFrame.x = -999999;
             tempFrame.y = -999999;
             tempFrame.fills = [];
@@ -1052,10 +1091,12 @@ if (figma.editorType === 'figma') {
         finally {
             if (tempFrame) {
                 try {
+                    gitlayerInternalNodeIds.add(tempFrame.id);
                     tempFrame.remove();
                 }
                 catch { }
             }
+            suppressDocumentChangeUntil = Date.now() + 2500;
             isRenderingCommitImage = false;
         }
     }
@@ -1070,6 +1111,7 @@ if (figma.editorType === 'figma') {
                     child.name === '__gitlayer_temp_render__' ||
                     child.name.startsWith('__gitlayer_temp_') ||
                     child.getPluginData('gitlayer_temp_frame') === 'true') {
+                    gitlayerInternalNodeIds.add(child.id);
                     child.remove();
                 }
             }
@@ -1089,15 +1131,57 @@ if (figma.editorType === 'figma') {
         try {
             await figma.loadAllPagesAsync();
             let previewTimeout = null;
-            figma.on('documentchange', () => {
-                if (isRenderingCommitImage || isExportingCanvasPreview)
+            figma.on('documentchange', (event) => {
+                if (isRenderingCommitImage ||
+                    isExportingCanvasPreview ||
+                    isSendingPreview ||
+                    Date.now() < suppressDocumentChangeUntil) {
                     return;
+                }
+                // Verify that the changes actually belong to user shapes, not GitLayer internal frames
+                if (event && Array.isArray(event.documentChanges)) {
+                    let hasUserDocChanges = false;
+                    for (const change of event.documentChanges) {
+                        if (gitlayerInternalNodeIds.has(change.id)) {
+                            continue;
+                        }
+                        const node = figma.getNodeById(change.id);
+                        if (node) {
+                            if (node.name.startsWith('__gitlayer_') ||
+                                node.getPluginData('gitlayer_preview') === 'true' ||
+                                node.getPluginData('gitlayer_temp_frame') === 'true') {
+                                gitlayerInternalNodeIds.add(node.id);
+                                continue;
+                            }
+                            // Check if any ancestor is an internal preview frame
+                            let parent = node.parent;
+                            let isParentInternal = false;
+                            while (parent) {
+                                if (parent.name.startsWith('__gitlayer_') ||
+                                    parent.getPluginData?.('gitlayer_preview') === 'true' ||
+                                    parent.getPluginData?.('gitlayer_temp_frame') === 'true') {
+                                    isParentInternal = true;
+                                    break;
+                                }
+                                parent = parent.parent;
+                            }
+                            if (isParentInternal) {
+                                gitlayerInternalNodeIds.add(node.id);
+                                continue;
+                            }
+                        }
+                        hasUserDocChanges = true;
+                        break;
+                    }
+                    if (!hasUserDocChanges)
+                        return;
+                }
                 if (previewTimeout !== null)
                     clearTimeout(previewTimeout);
                 previewTimeout = setTimeout(() => {
                     sendPreview();
                     previewTimeout = null;
-                }, 500);
+                }, 1200);
             });
         }
         catch (e) {
