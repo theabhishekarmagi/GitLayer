@@ -1037,7 +1037,13 @@
         // 1. Fetch figma-snapshot.json from GitHub
         const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${currentBranch}`;
         const res = await fetch(url, { headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' } });
-        if (!res.ok) throw new Error((await res.json()).message || 'File not found on GitHub');
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          if (res.status === 404 || errData.message === 'This repository is empty.') {
+            throw new Error('No design snapshot found on this branch yet. Please commit your canvas first.');
+          }
+          throw new Error(errData.message || 'File not found on GitHub');
+        }
         const data = await res.json();
 
         // 2. Decode the base64 content
@@ -1464,7 +1470,7 @@
     document.getElementById('btn-repo-add').addEventListener('click', () => {
       closeDropdowns();
       showScreen('screen-repo-select');
-      loadRepos();
+      fetchRepos();
     });
 
     // Close dropdowns on outside click
@@ -1569,32 +1575,17 @@
         previewEl.innerHTML = lines;
       }
       
-      // Handle commit execution — uses Figma REST API for full fidelity
+      // Handle commit execution
       if (msg.type === 'commit-payload') {
         const isMin = msg.source === 'min';
         const status = isMin ? document.getElementById('min-status-text') : document.getElementById('status-text');
-        status.innerText = 'Fetching design from Figma API...';
+        status.innerText = 'Pushing to GitHub...';
         status.style.color = '#aaa';
 
         try {
-          const { pat, repo, branch, fileKey, message } = msg;
+          const { pat, repo, branch, payload, message } = msg;
 
-          if (!fileKey) throw new Error('File key not available. Make sure you are inside a Figma file.');
-
-          // Step 1: Fetch the full file from Figma REST API
-          status.innerText = 'Fetching full design data...';
-          const figmaRes = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
-            headers: { 'X-Figma-Token': pat }
-          });
-          if (!figmaRes.ok) {
-            const fe = await figmaRes.json();
-            throw new Error(`Figma API error: ${fe.err || fe.status}`);
-          }
-          const figmaDoc = await figmaRes.json();
-
-          // Step 2: Store the full Figma document JSON to GitHub
-          status.innerText = 'Pushing to GitHub...';
-          const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(figmaDoc, null, 2))));
+          const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
           const url = `https://api.github.com/repos/${repo}/contents/figma-snapshot.json`;
           let sha = null;
 
@@ -1603,7 +1594,7 @@
             if (getRes.ok) sha = (await getRes.json()).sha;
           } catch (e) {}
 
-          const body = { message, content: contentBase64, branch: branch || 'main' };
+          const body = { message: message || 'GitLayer: Sync design', content: contentBase64, branch: branch || 'main' };
           if (sha) body.sha = sha;
 
           const res = await fetch(url, {
@@ -1625,8 +1616,10 @@
               document.getElementById('commit-desc').value = '';
               document.getElementById('commit-btn').disabled = false;
             }
+            // Refresh diff preview after commit
+            parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
           } else {
-            const error = await res.json();
+            const error = await res.json().catch(() => ({}));
             throw new Error(error.message || 'GitHub push failed');
           }
         } catch (e) {

@@ -1,51 +1,222 @@
 "use strict";
 // GitLayer - Main Plugin Code
-// Uses Figma REST API for full-fidelity serialization and custom deserializer for restoration
+// Complete in-engine serializer and deserializer for high-fidelity Git sync
 if (figma.editorType === 'figma') {
     figma.showUI(__html__, { width: 320, height: 420 });
     // ─────────────────────────────────────────────────────────────────────────────
-    // INIT
+    // SERIALIZER — Captures full node hierarchy & styling directly from Figma canvas
     // ─────────────────────────────────────────────────────────────────────────────
-    async function init() {
-        const pat = await figma.clientStorage.getAsync('github_pat');
-        const repo = figma.root.getPluginData('github_repo');
-        const branch = figma.root.getPluginData('github_branch') || 'main';
-        figma.ui.postMessage({
-            type: 'init-state',
-            pat,
-            repo,
-            branch,
-            fileKey: figma.fileKey ?? null
-        });
+    function serializeNode(node) {
+        const data = {
+            id: node.id,
+            name: node.name,
+            type: node.type,
+            visible: node.visible,
+            locked: node.locked,
+            x: node.x,
+            y: node.y,
+            width: node.width,
+            height: node.height,
+            opacity: 'opacity' in node ? node.opacity : 1,
+            blendMode: 'blendMode' in node ? node.blendMode : 'NORMAL'
+        };
+        if ('rotation' in node && typeof node.rotation === 'number') {
+            data.rotation = node.rotation;
+        }
+        // Fills
+        if ('fills' in node && Array.isArray(node.fills)) {
+            data.fills = node.fills.map((fill) => {
+                if (fill.type === 'SOLID') {
+                    return {
+                        type: 'SOLID',
+                        color: { r: fill.color.r, g: fill.color.g, b: fill.color.b },
+                        opacity: fill.opacity ?? 1,
+                        visible: fill.visible ?? true,
+                        blendMode: fill.blendMode ?? 'NORMAL'
+                    };
+                }
+                else if (fill.type.startsWith('GRADIENT')) {
+                    const gf = fill;
+                    return {
+                        type: gf.type,
+                        gradientTransform: gf.gradientTransform,
+                        gradientStops: (gf.gradientStops || []).map(s => ({
+                            position: s.position,
+                            color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 }
+                        })),
+                        opacity: gf.opacity ?? 1,
+                        visible: gf.visible ?? true
+                    };
+                }
+                return { type: fill.type };
+            });
+        }
+        // Strokes
+        if ('strokes' in node && Array.isArray(node.strokes)) {
+            data.strokes = node.strokes.map((stroke) => {
+                if (stroke.type === 'SOLID') {
+                    return {
+                        type: 'SOLID',
+                        color: { r: stroke.color.r, g: stroke.color.g, b: stroke.color.b },
+                        opacity: stroke.opacity ?? 1,
+                        visible: stroke.visible ?? true
+                    };
+                }
+                return { type: stroke.type };
+            });
+        }
+        if ('strokeWeight' in node && typeof node.strokeWeight === 'number') {
+            data.strokeWeight = node.strokeWeight;
+        }
+        if ('strokeAlign' in node)
+            data.strokeAlign = node.strokeAlign;
+        if ('dashPattern' in node && Array.isArray(node.dashPattern)) {
+            data.strokeDashes = Array.from(node.dashPattern);
+        }
+        // Corner radius
+        if ('cornerRadius' in node && typeof node.cornerRadius === 'number') {
+            data.cornerRadius = node.cornerRadius;
+        }
+        if ('topLeftRadius' in node) {
+            data.rectangleCornerRadii = [
+                node.topLeftRadius,
+                node.topRightRadius,
+                node.bottomRightRadius,
+                node.bottomLeftRadius
+            ];
+        }
+        // Effects (shadows, blur)
+        if ('effects' in node && Array.isArray(node.effects)) {
+            data.effects = node.effects.map((eff) => {
+                if (eff.type === 'DROP_SHADOW' || eff.type === 'INNER_SHADOW') {
+                    return {
+                        type: eff.type,
+                        color: { r: eff.color.r, g: eff.color.g, b: eff.color.b, a: eff.color.a ?? 1 },
+                        offset: { x: eff.offset.x, y: eff.offset.y },
+                        radius: eff.radius,
+                        spread: eff.spread,
+                        visible: eff.visible
+                    };
+                }
+                else if (eff.type === 'LAYER_BLUR' || eff.type === 'BACKGROUND_BLUR') {
+                    return {
+                        type: eff.type,
+                        radius: eff.radius,
+                        visible: eff.visible
+                    };
+                }
+                return { type: eff.type };
+            });
+        }
+        // Constraints
+        if ('constraints' in node) {
+            data.constraints = {
+                horizontal: node.constraints.horizontal,
+                vertical: node.constraints.vertical
+            };
+        }
+        // Auto layout
+        if ('layoutMode' in node) {
+            const fn = node;
+            data.layoutMode = fn.layoutMode;
+            data.primaryAxisSizingMode = fn.primaryAxisSizingMode;
+            data.counterAxisSizingMode = fn.counterAxisSizingMode;
+            data.primaryAxisAlignItems = fn.primaryAxisAlignItems;
+            data.counterAxisAlignItems = fn.counterAxisAlignItems;
+            data.paddingTop = fn.paddingTop;
+            data.paddingBottom = fn.paddingBottom;
+            data.paddingLeft = fn.paddingLeft;
+            data.paddingRight = fn.paddingRight;
+            data.itemSpacing = fn.itemSpacing;
+            data.clipsContent = fn.clipsContent;
+        }
+        // Text properties
+        if (node.type === 'TEXT') {
+            const tn = node;
+            data.characters = tn.characters;
+            const font = tn.fontName !== figma.mixed ? tn.fontName : { family: 'Inter', style: 'Regular' };
+            const fontSize = tn.fontSize !== figma.mixed ? tn.fontSize : 14;
+            data.style = {
+                fontFamily: font.family,
+                fontWeight: font.style.toLowerCase().includes('bold') ? 700 : 400,
+                italic: font.style.toLowerCase().includes('italic'),
+                fontSize: fontSize,
+                textAlignHorizontal: tn.textAlignHorizontal,
+                textAlignVertical: tn.textAlignVertical,
+                letterSpacing: tn.letterSpacing !== figma.mixed && tn.letterSpacing ? tn.letterSpacing.value : 0,
+                lineHeightPx: tn.lineHeight !== figma.mixed && tn.lineHeight && tn.lineHeight.unit === 'PIXELS' ? tn.lineHeight.value : undefined
+            };
+        }
+        // Geometry extras
+        if (node.type === 'ELLIPSE') {
+            data.arcData = node.arcData;
+        }
+        if (node.type === 'POLYGON') {
+            data.pointCount = node.pointCount;
+        }
+        if (node.type === 'STAR') {
+            data.pointCount = node.pointCount;
+            data.innerRadius = node.innerRadius;
+        }
+        if (node.type === 'VECTOR') {
+            try {
+                data.vectorNetwork = node.vectorNetwork;
+            }
+            catch { }
+        }
+        // Children recursion
+        if ('children' in node) {
+            data.children = node.children.map(child => serializeNode(child));
+        }
+        return data;
+    }
+    function serializeCurrentPage() {
+        const page = figma.currentPage;
+        return {
+            document: {
+                children: [
+                    {
+                        id: page.id,
+                        name: page.name,
+                        type: 'CANVAS',
+                        children: page.children.map(child => serializeNode(child))
+                    }
+                ]
+            },
+            version: '2.0.0',
+            timestamp: new Date().toISOString()
+        };
+    }
+    function sendPreview() {
         try {
-            await figma.loadAllPagesAsync();
-            let previewTimeout = null;
-            figma.on('documentchange', () => {
-                if (previewTimeout !== null)
-                    clearTimeout(previewTimeout);
-                previewTimeout = setTimeout(() => {
-                    figma.ui.postMessage({ type: 'document-changed', fileKey: figma.fileKey ?? null });
-                    previewTimeout = null;
-                }, 800);
+            const payload = serializeCurrentPage();
+            figma.ui.postMessage({
+                type: 'preview-payload',
+                payload: payload
             });
         }
         catch (e) {
-            console.error('Failed to init listener', e);
+            console.error('[GitLayer] Failed to send preview payload', e);
         }
     }
-    init();
     // ─────────────────────────────────────────────────────────────────────────────
-    // HELPERS
+    // DESERIALIZER — Reconstructs nodes on canvas
     // ─────────────────────────────────────────────────────────────────────────────
     function applyCommonProps(node, data) {
-        if (data.absoluteBoundingBox) {
-            if ('x' in node)
-                node.x = data.absoluteBoundingBox.x;
-            if ('y' in node)
-                node.y = data.absoluteBoundingBox.y;
-            if ('resize' in node)
-                node.resize(data.absoluteBoundingBox.width || 100, data.absoluteBoundingBox.height || 100);
+        const w = data.width ?? data.absoluteBoundingBox?.width ?? 100;
+        const h = data.height ?? data.absoluteBoundingBox?.height ?? 100;
+        const x = data.x ?? data.absoluteBoundingBox?.x ?? 0;
+        const y = data.y ?? data.absoluteBoundingBox?.y ?? 0;
+        if ('resize' in node && typeof w === 'number' && typeof h === 'number') {
+            try {
+                node.resize(Math.max(1, w), Math.max(1, h));
+            }
+            catch (e) { }
         }
+        if ('x' in node && typeof x === 'number')
+            node.x = x;
+        if ('y' in node && typeof y === 'number')
+            node.y = y;
         if (data.name && 'name' in node)
             node.name = data.name;
         if (data.opacity !== undefined && 'opacity' in node)
@@ -65,10 +236,26 @@ if (figma.editorType === 'figma') {
             const paints = [];
             for (const fill of data.fills) {
                 if (fill.type === 'SOLID' && fill.color) {
-                    paints.push({ type: 'SOLID', color: { r: fill.color.r, g: fill.color.g, b: fill.color.b }, opacity: fill.opacity ?? 1, visible: fill.visible ?? true, blendMode: fill.blendMode ?? 'NORMAL' });
+                    paints.push({
+                        type: 'SOLID',
+                        color: { r: fill.color.r, g: fill.color.g, b: fill.color.b },
+                        opacity: fill.opacity ?? 1,
+                        visible: fill.visible ?? true,
+                        blendMode: fill.blendMode ?? 'NORMAL'
+                    });
                 }
                 else if (['GRADIENT_LINEAR', 'GRADIENT_RADIAL', 'GRADIENT_ANGULAR', 'GRADIENT_DIAMOND'].includes(fill.type)) {
-                    paints.push({ type: fill.type, gradientTransform: fill.gradientTransform ?? [[1, 0, 0], [0, 1, 0]], gradientStops: (fill.gradientStops || []).map((s) => ({ position: s.position, color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 } })), visible: fill.visible ?? true, opacity: fill.opacity ?? 1, blendMode: fill.blendMode ?? 'NORMAL' });
+                    paints.push({
+                        type: fill.type,
+                        gradientTransform: fill.gradientTransform ?? [[1, 0, 0], [0, 1, 0]],
+                        gradientStops: (fill.gradientStops || []).map((s) => ({
+                            position: s.position,
+                            color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 }
+                        })),
+                        visible: fill.visible ?? true,
+                        opacity: fill.opacity ?? 1,
+                        blendMode: fill.blendMode ?? 'NORMAL'
+                    });
                 }
             }
             if (paints.length > 0)
@@ -76,7 +263,15 @@ if (figma.editorType === 'figma') {
         }
         // Strokes
         if ('strokes' in node && Array.isArray(data.strokes) && data.strokes.length > 0) {
-            const sp = data.strokes.filter((s) => s.type === 'SOLID' && s.color).map((s) => ({ type: 'SOLID', color: { r: s.color.r, g: s.color.g, b: s.color.b }, opacity: s.opacity ?? 1, visible: s.visible ?? true, blendMode: s.blendMode ?? 'NORMAL' }));
+            const sp = data.strokes
+                .filter((s) => s.type === 'SOLID' && s.color)
+                .map((s) => ({
+                type: 'SOLID',
+                color: { r: s.color.r, g: s.color.g, b: s.color.b },
+                opacity: s.opacity ?? 1,
+                visible: s.visible ?? true,
+                blendMode: s.blendMode ?? 'NORMAL'
+            }));
             if (sp.length > 0)
                 node.strokes = sp;
         }
@@ -100,7 +295,16 @@ if (figma.editorType === 'figma') {
             const effects = [];
             for (const e of data.effects) {
                 if (e.type === 'DROP_SHADOW' || e.type === 'INNER_SHADOW') {
-                    effects.push({ type: e.type, color: { r: e.color.r, g: e.color.g, b: e.color.b, a: e.color.a ?? 1 }, offset: { x: e.offset?.x ?? 0, y: e.offset?.y ?? 0 }, radius: e.radius ?? 0, spread: e.spread ?? 0, visible: e.visible ?? true, blendMode: e.blendMode ?? 'NORMAL', showShadowBehindNode: false });
+                    effects.push({
+                        type: e.type,
+                        color: { r: e.color.r, g: e.color.g, b: e.color.b, a: e.color.a ?? 1 },
+                        offset: { x: e.offset?.x ?? 0, y: e.offset?.y ?? 0 },
+                        radius: e.radius ?? 0,
+                        spread: e.spread ?? 0,
+                        visible: e.visible ?? true,
+                        blendMode: e.blendMode ?? 'NORMAL',
+                        showShadowBehindNode: false
+                    });
                 }
                 else if (e.type === 'LAYER_BLUR' || e.type === 'BACKGROUND_BLUR') {
                     effects.push({ type: e.type, radius: e.radius ?? 0, visible: e.visible ?? true });
@@ -111,7 +315,10 @@ if (figma.editorType === 'figma') {
         }
         // Constraints
         if ('constraints' in node && data.constraints) {
-            node.constraints = { horizontal: data.constraints.horizontal ?? 'LEFT', vertical: data.constraints.vertical ?? 'TOP' };
+            node.constraints = {
+                horizontal: data.constraints.horizontal ?? 'LEFT',
+                vertical: data.constraints.vertical ?? 'TOP'
+            };
         }
     }
     function applyAutoLayout(frame, data) {
@@ -187,8 +394,15 @@ if (figma.editorType === 'figma') {
         }
         if (Array.isArray(data.fills) && data.fills.length > 0) {
             const f = data.fills[0];
-            if (f.type === 'SOLID' && f.color)
-                textNode.fills = [{ type: 'SOLID', color: { r: f.color.r, g: f.color.g, b: f.color.b }, opacity: f.opacity ?? 1, visible: true, blendMode: 'NORMAL' }];
+            if (f.type === 'SOLID' && f.color) {
+                textNode.fills = [{
+                        type: 'SOLID',
+                        color: { r: f.color.r, g: f.color.g, b: f.color.b },
+                        opacity: f.opacity ?? 1,
+                        visible: true,
+                        blendMode: 'NORMAL'
+                    }];
+            }
         }
     }
     async function buildNode(data, parent) {
@@ -201,25 +415,27 @@ if (figma.editorType === 'figma') {
                     const frame = figma.createFrame();
                     parent.appendChild(frame);
                     applyCommonProps(frame, data);
-                    applyAutoLayout(frame, data);
                     if (Array.isArray(data.layoutGrids))
                         try {
                             frame.layoutGrids = data.layoutGrids;
                         }
                         catch { }
-                    if (data.children)
+                    if (data.children) {
                         for (const c of data.children)
                             await buildNode(c, frame);
+                    }
+                    applyAutoLayout(frame, data);
                     return frame;
                 }
                 case 'GROUP': {
                     const kids = [];
-                    if (data.children)
+                    if (data.children) {
                         for (const c of data.children) {
                             const b = await buildNode(c, figma.currentPage);
                             if (b)
                                 kids.push(b);
                         }
+                    }
                     if (kids.length === 0)
                         return null;
                     const group = figma.group(kids, parent);
@@ -288,12 +504,13 @@ if (figma.editorType === 'figma') {
                 }
                 case 'BOOLEAN_OPERATION': {
                     const kids = [];
-                    if (data.children)
+                    if (data.children) {
                         for (const c of data.children) {
                             const b = await buildNode(c, figma.currentPage);
                             if (b)
                                 kids.push(b);
                         }
+                    }
                     if (kids.length < 2)
                         return null;
                     const flat = figma.flatten(kids, parent);
@@ -312,7 +529,10 @@ if (figma.editorType === 'figma') {
     }
     async function deserializeDocument(doc) {
         if (doc.pageName && doc.nodes) {
-            figma.ui.postMessage({ type: 'pull-error', message: 'Legacy snapshot format detected. Please commit this design again using the updated plugin first.' });
+            figma.ui.postMessage({
+                type: 'pull-error',
+                message: 'Legacy snapshot format detected. Please commit this design again using the updated plugin first.'
+            });
             return;
         }
         const pages = doc?.document?.children ?? [];
@@ -322,6 +542,7 @@ if (figma.editorType === 'figma') {
         }
         const currentPage = figma.currentPage;
         currentPage.name = pages[0].name ?? currentPage.name;
+        // Remove existing nodes on canvas
         for (const child of [...currentPage.children])
             child.remove();
         const topNodes = pages[0].children ?? [];
@@ -329,12 +550,48 @@ if (figma.editorType === 'figma') {
         for (const nodeData of topNodes) {
             await buildNode(nodeData, currentPage);
             restored++;
-            figma.ui.postMessage({ type: 'pull-progress', message: `Restored ${restored}/${topNodes.length} nodes...` });
+            figma.ui.postMessage({
+                type: 'pull-progress',
+                message: `Restored ${restored}/${topNodes.length} nodes...`
+            });
         }
-        if (currentPage.children.length > 0)
+        if (currentPage.children.length > 0) {
             figma.viewport.scrollAndZoomIntoView(currentPage.children);
+        }
         figma.ui.postMessage({ type: 'pull-success', count: restored });
     }
+    // ─────────────────────────────────────────────────────────────────────────────
+    // INIT & DOCUMENT CHANGE LISTENER
+    // ─────────────────────────────────────────────────────────────────────────────
+    async function init() {
+        const pat = await figma.clientStorage.getAsync('github_pat');
+        const repo = figma.root.getPluginData('github_repo');
+        const branch = figma.root.getPluginData('github_branch') || 'main';
+        figma.ui.postMessage({
+            type: 'init-state',
+            pat,
+            repo,
+            branch
+        });
+        // Send initial diff preview
+        sendPreview();
+        try {
+            await figma.loadAllPagesAsync();
+            let previewTimeout = null;
+            figma.on('documentchange', () => {
+                if (previewTimeout !== null)
+                    clearTimeout(previewTimeout);
+                previewTimeout = setTimeout(() => {
+                    sendPreview();
+                    previewTimeout = null;
+                }, 400);
+            });
+        }
+        catch (e) {
+            console.error('Failed to init change listener', e);
+        }
+    }
+    init();
     // ─────────────────────────────────────────────────────────────────────────────
     // MESSAGE HANDLER
     // ─────────────────────────────────────────────────────────────────────────────
@@ -356,11 +613,20 @@ if (figma.editorType === 'figma') {
         else if (msg.type === 'resize' && msg.width && msg.height) {
             figma.ui.resize(msg.width, msg.height);
         }
-        else if (msg.type === 'request-file-key') {
-            figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey ?? null });
+        else if (msg.type === 'request-preview') {
+            sendPreview();
         }
         else if (msg.type === 'serialize-and-commit') {
-            figma.ui.postMessage({ type: 'commit-payload', pat: msg.pat, repo: msg.repo, branch: msg.branch, fileKey: figma.fileKey ?? null, message: msg.summary || `GitLayer: Sync "${figma.currentPage.name}"`, source: msg.source });
+            const payload = serializeCurrentPage();
+            figma.ui.postMessage({
+                type: 'commit-payload',
+                pat: msg.pat,
+                repo: msg.repo,
+                branch: msg.branch,
+                payload: payload,
+                message: msg.summary || `GitLayer: Sync "${figma.currentPage.name}"`,
+                source: msg.source
+            });
         }
         else if (msg.type === 'pull-from-github') {
             try {
