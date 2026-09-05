@@ -35,7 +35,8 @@ if (figma.editorType === 'figma') {
         // 1. Load and send initial state
         const pat = await figma.clientStorage.getAsync('github_pat');
         const repo = figma.root.getPluginData('github_repo');
-        figma.ui.postMessage({ type: 'init-state', pat, repo });
+        const branch = figma.root.getPluginData('github_branch');
+        figma.ui.postMessage({ type: 'init-state', pat, repo, branch });
         // 2. Setup live sync listener
         try {
             await figma.loadAllPagesAsync();
@@ -72,10 +73,13 @@ if (figma.editorType === 'figma') {
         else if (msg.type === 'save-repo') {
             if (msg.repo)
                 figma.root.setPluginData('github_repo', msg.repo);
+            if (msg.branch)
+                figma.root.setPluginData('github_branch', msg.branch);
         }
         else if (msg.type === 'logout') {
             await figma.clientStorage.deleteAsync('github_pat');
             figma.root.setPluginData('github_repo', '');
+            figma.root.setPluginData('github_branch', '');
         }
         else if (msg.type === 'resize' && msg.width && msg.height) {
             figma.ui.resize(msg.width, msg.height);
@@ -105,6 +109,7 @@ if (figma.editorType === 'figma') {
                 type: 'commit-payload',
                 pat: msg.pat,
                 repo: msg.repo,
+                branch: msg.branch,
                 payload: payload,
                 message: msg.summary || `GitLayer: Sync page "${page.name}"`,
                 source: msg.source

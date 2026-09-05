@@ -99,20 +99,32 @@
     /* NEW TOPBAR PATTERN (used in minimized and maximized) */
     .new-topbar {
       display: flex;
-      background-color: #2C2D33; /* Lighter grey for the pill */
-      border-radius: 12px;
+      background-color: #2C2D33;
       height: 56px;
       align-items: center;
-      padding: 0 16px;
+      padding-right: 16px; /* Right padding for buttons */
       box-sizing: border-box;
       width: 100%;
       flex-shrink: 0;
-      border: 1px solid rgba(255, 255, 255, 0.05);
     }
     .topbar-section {
       display: flex;
       align-items: center;
-      margin-right: 32px;
+      height: 100%;
+      padding: 0 16px;
+      border-right: 1px solid #1E1E1E;
+      cursor: pointer;
+      box-sizing: border-box;
+      transition: background-color 0.1s;
+    }
+    .topbar-section:hover {
+      background-color: rgba(255, 255, 255, 0.08);
+    }
+    .topbar-chevron {
+      margin-left: 20px;
+      width: 12px;
+      height: 12px;
+      opacity: 0.6;
     }
     .topbar-icon {
       margin-right: 10px;
@@ -170,8 +182,7 @@
     /* Minimized Popover */
     #screen-minimized {
       height: 100vh;
-      background-color: #1E1E1E; /* Dark background for the window */
-      padding: 8px 12px; /* Creates the floating pill effect */
+      background-color: #2C2D33;
       box-sizing: border-box;
       position: relative;
     }
@@ -289,6 +300,72 @@
       display: block;
       padding: 2px 0;
     }
+    /* Dropdowns */
+    .ghd-dropdown {
+      display: none;
+      position: absolute;
+      top: 56px;
+      background-color: #252526;
+      border: 1px solid #444;
+      border-radius: 6px;
+      width: 280px;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      flex-direction: column;
+    }
+    .ghd-dropdown.active {
+      display: flex;
+    }
+    .dropdown-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px;
+      font-size: 12px;
+      color: #CCC;
+      font-weight: 600;
+      border-bottom: 1px solid #333;
+    }
+    .dropdown-action-btn {
+      background: transparent;
+      border: none;
+      color: #CCC;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .dropdown-action-btn:hover {
+      color: #FFF;
+    }
+    .dropdown-search {
+      padding: 8px 12px;
+      border-bottom: 1px solid #333;
+    }
+    .dropdown-list {
+      max-height: 250px;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+    .dropdown-item {
+      padding: 6px 12px 6px 24px;
+      font-size: 12px;
+      color: #CCC;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      position: relative;
+    }
+    .dropdown-item:hover {
+      background-color: #007ACC;
+      color: #FFF;
+    }
+    .dropdown-item .check-icon {
+      position: absolute;
+      left: 6px;
+      display: none;
+    }
+    .dropdown-item.selected .check-icon {
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -356,25 +433,33 @@
     <symbol id="icon-collapse" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
       <path d="M4 14h6v6M20 10h-6V4M10 14l-7 7M14 10l7-7"/>
     </symbol>
+    <symbol id="icon-chevron-down" viewBox="0 0 16 16" fill="white">
+      <path d="M4.22 6.22a.75.75 0 011.06 0L8 8.94l2.72-2.72a.75.75 0 111.06 1.06l-3.25 3.25a.75.75 0 01-1.06 0L4.22 7.28a.75.75 0 010-1.06z"></path>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 16 16" fill="currentColor">
+      <path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path>
+    </symbol>
   </svg>
 
 
   <!-- Screen Minimized (Floating Toolbar) -->
   <div id="screen-minimized" class="screen">
     <div class="new-topbar">
-      <div class="topbar-section">
+      <div class="topbar-section" id="min-repo-section">
         <svg class="topbar-icon" width="16" height="16"><use href="#icon-repo"/></svg>
         <div class="topbar-text-group">
           <div class="topbar-label">Current Repository</div>
           <div class="topbar-value" id="min-repo-name">Repo Name</div>
         </div>
+        <svg class="topbar-chevron"><use href="#icon-chevron-down"/></svg>
       </div>
-      <div class="topbar-section">
+      <div class="topbar-section" id="min-branch-section">
         <svg class="topbar-icon" width="16" height="16"><use href="#icon-branch"/></svg>
         <div class="topbar-text-group">
           <div class="topbar-label">Current Branch</div>
-          <div class="topbar-value">main</div>
+          <div class="topbar-value" id="min-branch-name">main</div>
         </div>
+        <svg class="topbar-chevron"><use href="#icon-chevron-down"/></svg>
       </div>
       <div class="topbar-spacer"></div>
       
@@ -396,19 +481,21 @@
   <div id="screen-3" class="screen">
     <!-- Top Bar matching the new pattern, but flush for maximized view -->
     <div class="new-topbar" style="border-radius: 0; border-left: none; border-right: none; border-top: none; border-bottom: 1px solid #000; background-color: #252526; height: 56px;">
-      <div class="topbar-section">
+      <div class="topbar-section" id="max-repo-section">
         <svg class="topbar-icon" width="16" height="16"><use href="#icon-repo"/></svg>
         <div class="topbar-text-group">
           <div class="topbar-label">Current Repository</div>
           <div class="topbar-value" id="max-repo-name">Repo Name</div>
         </div>
+        <svg class="topbar-chevron"><use href="#icon-chevron-down"/></svg>
       </div>
-      <div class="topbar-section">
+      <div class="topbar-section" id="max-branch-section">
         <svg class="topbar-icon" width="16" height="16"><use href="#icon-branch"/></svg>
         <div class="topbar-text-group">
           <div class="topbar-label">Current Branch</div>
-          <div class="topbar-value">main</div>
+          <div class="topbar-value" id="max-branch-name">main</div>
         </div>
+        <svg class="topbar-chevron"><use href="#icon-chevron-down"/></svg>
       </div>
       <div class="topbar-spacer"></div>
       
@@ -449,9 +536,40 @@
   </div>
 
 
+  <!-- Dropdowns -->
+  <div id="repo-dropdown" class="ghd-dropdown">
+    <div class="dropdown-header">
+      <span>Repositories</span>
+      <button id="btn-repo-add" class="dropdown-action-btn">Add ▾</button>
+    </div>
+    <div class="dropdown-search">
+      <input type="text" id="repo-filter" placeholder="Filter" class="ghd-input" style="margin: 0; width: 100%;" />
+    </div>
+    <div class="dropdown-list" id="repo-dropdown-list">
+      <!-- Repo items injected here -->
+    </div>
+  </div>
+
+  <div id="branch-dropdown" class="ghd-dropdown">
+    <div class="dropdown-header" style="justify-content: space-between;">
+      <span>Branches</span>
+      <button id="btn-new-branch" class="dropdown-action-btn" style="border: 1px solid #444; padding: 2px 8px; border-radius: 4px;">New Branch</button>
+    </div>
+    <div class="dropdown-search">
+      <input type="text" id="branch-filter" placeholder="Filter" class="ghd-input" style="margin: 0; width: 100%;" />
+    </div>
+    <div style="padding: 4px 12px; font-size: 11px; color: #888; font-weight: 600; border-bottom: 1px solid #333;">Available Branches</div>
+    <div class="dropdown-list" id="branch-dropdown-list">
+      <!-- Branch items injected here -->
+    </div>
+  </div>
+
   <script>
     let currentPat = '';
     let currentRepo = '';
+    let currentBranch = 'main';
+    let cachedRepos = [];
+    let cachedBranches = [];
 
     function showScreen(id) {
       document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -464,7 +582,7 @@
         // Hide popover by default when switching to minimized
         document.getElementById('min-commit-popover').classList.remove('active');
         
-        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 72 } }, '*');
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 56 } }, '*');
       } 
       else if (id === 'screen-3') {
         document.getElementById('onboarding-container').style.display = 'none';
@@ -495,6 +613,7 @@
         if (res.ok) {
           const repos = await res.json();
           const figmaRepos = repos.filter(repo => repo.topics && repo.topics.includes('figma-repo'));
+          cachedRepos = figmaRepos; // Store for dropdown
           const select = document.getElementById('existing-repos');
           select.innerHTML = '';
           figmaRepos.forEach(repo => {
@@ -615,14 +734,198 @@
       btn.disabled = false;
     };
 
-    document.getElementById('btn-logout').onclick = (e) => {
+
+
+    document.getElementById('btn-logout').addEventListener('click', (e) => {
       e.preventDefault();
       currentPat = '';
       currentRepo = '';
-      document.getElementById('pat').value = '';
+      currentBranch = 'main';
       parent.postMessage({ pluginMessage: { type: 'logout' } }, '*');
       showScreen('screen-1');
-    };
+    });
+
+    // --- Dropdown UI Logic ---
+    let activeDropdown = null;
+
+    function closeDropdowns() {
+      document.getElementById('repo-dropdown').classList.remove('active');
+      document.getElementById('branch-dropdown').classList.remove('active');
+      activeDropdown = null;
+      // Shrink window if in minimized view
+      if (document.getElementById('screen-minimized').classList.contains('active')) {
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 56 } }, '*');
+      }
+    }
+
+    function toggleDropdown(id, leftPos) {
+      if (activeDropdown === id) {
+        closeDropdowns();
+        return;
+      }
+      closeDropdowns();
+      const el = document.getElementById(id);
+      el.style.left = leftPos + 'px';
+      el.classList.add('active');
+      activeDropdown = id;
+      
+      // Expand window if in minimized view so dropdown isn't cut off
+      if (document.getElementById('screen-minimized').classList.contains('active')) {
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 400 } }, '*');
+      }
+
+      if (id === 'repo-dropdown') renderRepoDropdown();
+      if (id === 'branch-dropdown') {
+        renderBranchDropdown();
+        if (cachedBranches.length === 0) fetchBranches();
+      }
+    }
+
+    // Attach listeners
+    document.getElementById('min-repo-section').addEventListener('click', (e) => toggleDropdown('repo-dropdown', e.currentTarget.getBoundingClientRect().left));
+    document.getElementById('max-repo-section').addEventListener('click', (e) => toggleDropdown('repo-dropdown', e.currentTarget.getBoundingClientRect().left));
+    document.getElementById('min-branch-section').addEventListener('click', (e) => toggleDropdown('branch-dropdown', e.currentTarget.getBoundingClientRect().left));
+    document.getElementById('max-branch-section').addEventListener('click', (e) => toggleDropdown('branch-dropdown', e.currentTarget.getBoundingClientRect().left));
+
+    // Render Dropdowns
+    function renderRepoDropdown(filter = '') {
+      const list = document.getElementById('repo-dropdown-list');
+      list.innerHTML = '';
+      const filtered = cachedRepos.filter(r => r.full_name.toLowerCase().includes(filter.toLowerCase()));
+      filtered.forEach(repo => {
+        const div = document.createElement('div');
+        div.className = 'dropdown-item' + (repo.full_name === currentRepo ? ' selected' : '');
+        div.innerHTML = `<svg class="check-icon" width="16" height="16"><use href="#icon-check"/></svg>
+                         <svg class="topbar-icon" width="16" height="16" style="margin-right: 8px"><use href="#icon-repo"/></svg>
+                         ${repo.full_name}`;
+        div.onclick = () => {
+          currentRepo = repo.full_name;
+          currentBranch = repo.default_branch || 'main';
+          updateTopbarUI();
+          parent.postMessage({ pluginMessage: { type: 'save-repo', repo: currentRepo, branch: currentBranch } }, '*');
+          closeDropdowns();
+          fetchBranches(); // refresh branches
+        };
+        list.appendChild(div);
+      });
+    }
+
+    function renderBranchDropdown(filter = '') {
+      const list = document.getElementById('branch-dropdown-list');
+      list.innerHTML = '';
+      const filtered = cachedBranches.filter(b => b.name.toLowerCase().includes(filter.toLowerCase()));
+      filtered.forEach(branch => {
+        const div = document.createElement('div');
+        div.className = 'dropdown-item' + (branch.name === currentBranch ? ' selected' : '');
+        div.innerHTML = `<svg class="check-icon" width="16" height="16"><use href="#icon-check"/></svg>
+                         <svg class="topbar-icon" width="16" height="16" style="margin-right: 8px"><use href="#icon-branch"/></svg>
+                         ${branch.name}`;
+        div.onclick = () => {
+          currentBranch = branch.name;
+          updateTopbarUI();
+          parent.postMessage({ pluginMessage: { type: 'save-repo', repo: currentRepo, branch: currentBranch } }, '*'); // Persist
+          closeDropdowns();
+        };
+        list.appendChild(div);
+      });
+      if (filtered.length === 0 && cachedBranches.length > 0) {
+        list.innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">No branches found</div>';
+      } else if (cachedBranches.length === 0) {
+        list.innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">Loading...</div>';
+      }
+    }
+
+    // Filter listeners
+    document.getElementById('repo-filter').addEventListener('input', (e) => renderRepoDropdown(e.target.value));
+    document.getElementById('branch-filter').addEventListener('input', (e) => renderBranchDropdown(e.target.value));
+
+    function updateTopbarUI() {
+      document.getElementById('min-repo-name').innerText = currentRepo || 'Setup required';
+      document.getElementById('max-repo-name').innerText = currentRepo || 'Setup required';
+      document.getElementById('min-branch-name').innerText = currentBranch;
+      document.getElementById('max-branch-name').innerText = currentBranch;
+    }
+
+    // Fetch Branches API
+    async function fetchBranches() {
+      if (!currentRepo || !currentPat) return;
+      try {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/branches`, {
+          headers: {
+            'Authorization': `Bearer ${currentPat}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        if (res.ok) {
+          cachedBranches = await res.json();
+          if (activeDropdown === 'branch-dropdown') renderBranchDropdown(document.getElementById('branch-filter').value);
+        }
+      } catch (err) {
+        console.error("Failed to fetch branches", err);
+      }
+    }
+
+    // Create New Branch API
+    document.getElementById('btn-new-branch').addEventListener('click', async () => {
+      const newName = prompt('Enter new branch name:');
+      if (!newName) return;
+      
+      // Find SHA of current branch
+      const current = cachedBranches.find(b => b.name === currentBranch);
+      if (!current) return alert("Error determining current branch SHA.");
+      
+      document.getElementById('branch-dropdown-list').innerHTML = '<div style="padding: 12px; color: #888; font-size: 12px; text-align: center;">Creating...</div>';
+      
+      try {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/git/refs`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${currentPat}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            ref: `refs/heads/${newName}`,
+            sha: current.commit.sha
+          })
+        });
+        if (res.ok) {
+          currentBranch = newName;
+          updateTopbarUI();
+          parent.postMessage({ pluginMessage: { type: 'save-repo', repo: currentRepo, branch: currentBranch } }, '*');
+          closeDropdowns();
+          fetchBranches(); // refresh
+        } else {
+          const err = await res.json();
+          alert(`Failed to create branch: ${err.message}`);
+          renderBranchDropdown();
+        }
+      } catch (err) {
+        alert("Network error creating branch.");
+        renderBranchDropdown();
+      }
+    });
+
+    document.getElementById('btn-repo-add').addEventListener('click', () => {
+      closeDropdowns();
+      showScreen('screen-repo-select');
+      loadRepos();
+    });
+
+    // Close dropdowns on outside click
+    document.addEventListener('click', (e) => {
+      if (activeDropdown) {
+        const dd = document.getElementById(activeDropdown);
+        const triggers = document.querySelectorAll('.topbar-section');
+        let isTrigger = false;
+        triggers.forEach(t => { if (t.contains(e.target)) isTrigger = true; });
+        if (!dd.contains(e.target) && !isTrigger) {
+          closeDropdowns();
+        }
+      }
+    });
+
+    // --- End Dropdown Logic ---
 
     // --- Expanding / Collapsing Logic ---
     document.getElementById('btn-expand').onclick = () => {
@@ -637,7 +940,7 @@
       const popover = document.getElementById('min-commit-popover');
       if (popover.classList.contains('active')) {
         popover.classList.remove('active');
-        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 72 } }, '*');
+        parent.postMessage({ pluginMessage: { type: 'resize', width: 700, height: 56 } }, '*');
       } else {
         popover.classList.add('active');
         // Expand window downwards to fit popover
@@ -658,7 +961,7 @@
       status.innerText = 'Pushing...';
       status.style.color = '#cccccc';
       document.getElementById('btn-min-push').disabled = true;
-      parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, summary, source: 'min' } }, '*');
+      parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, branch: currentBranch, summary, source: 'min' } }, '*');
     };
 
 
@@ -676,7 +979,7 @@
       status.innerText = 'Serializing...';
       status.style.color = '#cccccc';
       document.getElementById('commit-btn').disabled = true;
-      parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, summary, source: 'max' } }, '*');
+      parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, branch: currentBranch, summary, source: 'max' } }, '*');
     };
 
     // --- Message passing from plugin ---
@@ -687,13 +990,16 @@
       if (msg.type === 'init-state') {
         if (msg.pat) {
           currentPat = msg.pat;
+          fetchRepos(); // Prefetch repos for dropdown
           if (msg.repo) {
             currentRepo = msg.repo;
+            currentBranch = msg.branch || 'main';
+            updateTopbarUI();
+            fetchBranches(); // Prefetch branches for dropdown
             // Default to minimized view when opening an existing file
             showScreen('screen-minimized');
           } else {
             showScreen('screen-repo-select');
-            fetchRepos();
           }
         } else {
           showScreen('screen-1');
@@ -715,20 +1021,20 @@
         status.innerText = 'Pushing to GitHub...';
         
         try {
-          const { pat, repo, payload, message } = msg;
+          const { pat, repo, branch, payload, message } = msg;
           const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
           const url = `https://api.github.com/repos/${repo}/contents/figma-snapshot.json`;
           let sha = null;
           
           try {
-            const getRes = await fetch(url, { headers: { 'Authorization': `Bearer ${pat}` } });
+            const getRes = await fetch(`${url}?ref=${branch || 'main'}`, { headers: { 'Authorization': `Bearer ${pat}` } });
             if (getRes.ok) {
               const getData = await getRes.json();
               sha = getData.sha;
             }
           } catch (e) { }
 
-          const body = { message, content: contentBase64 };
+          const body = { message, content: contentBase64, branch: branch || 'main' };
           if (sha) body.sha = sha;
 
           const res = await fetch(url, {
