@@ -215,6 +215,7 @@ if (figma.editorType === 'figma') {
 
   function serializeCurrentPage() {
     const page = figma.currentPage;
+    const realChildren = page.children.filter(c => c.getPluginData('gitlayer_preview') !== 'true');
     return {
       document: {
         children: [
@@ -222,7 +223,7 @@ if (figma.editorType === 'figma') {
             id: page.id,
             name: page.name,
             type: 'CANVAS',
-            children: page.children.map(child => serializeNode(child))
+            children: realChildren.map(child => serializeNode(child))
           }
         ]
       },
@@ -231,13 +232,98 @@ if (figma.editorType === 'figma') {
     };
   }
 
+  async function exportNativePageSvg(): Promise<string | null> {
+    const page = figma.currentPage;
+    if (!page || !page.children || page.children.length === 0) return null;
+
+    const exportTargets = page.children.filter(
+      c => c.visible !== false && c.type !== 'SLICE' && c.getPluginData('gitlayer_preview') !== 'true'
+    );
+    if (exportTargets.length === 0) return null;
+
+    try {
+      await page.loadAsync();
+    } catch {}
+
+    // 1. Try whole-page export first
+    try {
+      const pageSvg = await page.exportAsync({
+        format: 'SVG_STRING',
+        svgOutlineText: true,
+        svgSimplifyStroke: true
+      });
+      if (pageSvg && pageSvg.trim().startsWith('<svg') && pageSvg.includes('</svg>')) {
+        return pageSvg;
+      }
+    } catch (pageErr) {
+      console.warn('[GitLayer] Whole-page exportAsync failed, trying fallback...', pageErr);
+    }
+
+    // 2. If single top-level node
+    if (exportTargets.length === 1) {
+      try {
+        return await exportTargets[0].exportAsync({
+          format: 'SVG_STRING',
+          svgOutlineText: true,
+          svgSimplifyStroke: true
+        });
+      } catch {}
+    }
+
+    // 3. Fallback: Composite all top-level targets into a single clean SVG
+    try {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const t of exportTargets) {
+        if ('x' in t && 'y' in t && 'width' in t && 'height' in t) {
+          minX = Math.min(minX, t.x);
+          minY = Math.min(minY, t.y);
+          maxX = Math.max(maxX, t.x + t.width);
+          maxY = Math.max(maxY, t.y + t.height);
+        }
+      }
+      if (!isFinite(minX) || !isFinite(minY)) return null;
+      const pad = 40;
+      const vbX = Math.floor(minX - pad);
+      const vbY = Math.floor(minY - pad);
+      const vbW = Math.ceil(maxX - minX + pad * 2);
+      const vbH = Math.ceil(maxY - minY + pad * 2);
+
+      const items = await Promise.all(
+        exportTargets.map(async (target) => {
+          if (!('x' in target && 'y' in target && 'width' in target && 'height' in target)) return null;
+          if (target.width <= 0 || target.height <= 0) return null;
+          try {
+            const svgStr = await target.exportAsync({
+              format: 'SVG_STRING',
+              svgOutlineText: true,
+              svgSimplifyStroke: true
+            });
+            if (!svgStr) return null;
+            return `<g transform="translate(${target.x}, ${target.y})">${svgStr}</g>`;
+          } catch {
+            return null;
+          }
+        })
+      );
+      const validItems = items.filter(Boolean);
+      if (validItems.length === 0) return null;
+
+      return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${vbX} ${vbY} ${vbW} ${vbH}">${validItems.join('')}</svg>`;
+    } catch (compositeErr) {
+      console.error('[GitLayer] Composite SVG export failed', compositeErr);
+      return null;
+    }
+  }
+
   async function generateVisualPreview(): Promise<any[] | null> {
     const page = figma.currentPage;
     const children = page.children;
     if (!children || children.length === 0) return null;
 
-    // Filter to visible top-level nodes (up to 50 nodes, excluding SLICE export tools)
-    const exportTargets = children.filter(c => c.visible !== false && c.type !== 'SLICE').slice(0, 50);
+    // Filter to visible top-level nodes (up to 50 nodes, excluding SLICE export tools and preview frames)
+    const exportTargets = children.filter(
+      c => c.visible !== false && c.type !== 'SLICE' && c.getPluginData('gitlayer_preview') !== 'true'
+    ).slice(0, 50);
     if (exportTargets.length === 0) return null;
 
     try {
@@ -250,7 +336,7 @@ if (figma.editorType === 'figma') {
 
           // Attempt native vector SVG export directly from Figma C++ engine
           try {
-            const svgString = await child.exportAsync({ format: 'SVG_STRING' });
+            const svgString = await child.exportAsync({ format: 'SVG_STRING', svgOutlineText: true });
             if (svgString && svgString.length > 0) {
               return {
                 id: child.id,
@@ -301,10 +387,12 @@ if (figma.editorType === 'figma') {
     isSendingPreview = true;
     try {
       const payload = serializeCurrentPage();
+      const nativeSvg = await exportNativePageSvg();
       const thumbnails = await generateVisualPreview();
       figma.ui.postMessage({
         type: 'preview-payload',
         payload: payload,
+        nativeSvg: nativeSvg,
         thumbnails: thumbnails
       });
     } catch (e) {
@@ -646,6 +734,12 @@ if (figma.editorType === 'figma') {
 
     const currentPage = figma.currentPage;
 
+    // Clean up any existing preview frame from canvas first
+    const existingPreviews = currentPage.children.filter(c => c.getPluginData('gitlayer_preview') === 'true');
+    for (const p of existingPreviews) {
+      try { p.remove(); } catch {}
+    }
+
     // Calculate bounding box of existing canvas children so we don't overlap!
     let maxX = 0;
     let minY = 0;
@@ -666,7 +760,8 @@ if (figma.editorType === 'figma') {
 
     // Create a container Frame for this historical version
     const container = figma.createFrame();
-    container.name = `Version: ${title} (${shortSha})`;
+    container.name = `[GitLayer Preview] ${title} (${shortSha})`;
+    container.setPluginData('gitlayer_preview', 'true');
     container.x = offsetX;
     container.y = offsetY;
     container.fills = []; // Transparent background
@@ -674,10 +769,10 @@ if (figma.editorType === 'figma') {
     container.strokes = [{
       type: 'SOLID',
       color: { r: 0.18, g: 0.5, b: 0.97 }, // #2f81f7 GitHub blue
-      opacity: 0.8
+      opacity: 0.9
     }];
-    container.strokeWeight = 1;
-    container.dashPattern = [6, 4];
+    container.strokeWeight = 2;
+    container.dashPattern = [8, 4];
     container.cornerRadius = 8;
     currentPage.appendChild(container);
 
@@ -689,6 +784,10 @@ if (figma.editorType === 'figma') {
       figma.ui.postMessage({
         type: 'import-progress',
         message: `Importing ${restored}/${topNodes.length} nodes...`
+      });
+      figma.ui.postMessage({
+        type: 'preview-canvas-progress',
+        message: `Building on canvas ${restored}/${topNodes.length}...`
       });
     }
 
@@ -712,6 +811,25 @@ if (figma.editorType === 'figma') {
       sha: shortSha,
       title: title,
       count: restored
+    });
+    figma.ui.postMessage({
+      type: 'preview-canvas-success',
+      sha: shortSha,
+      title: title,
+      count: restored
+    });
+  }
+
+  function dismissCanvasPreview() {
+    const currentPage = figma.currentPage;
+    const existingPreviews = currentPage.children.filter(c => c.getPluginData('gitlayer_preview') === 'true');
+    let count = 0;
+    for (const p of existingPreviews) {
+      try { p.remove(); count++; } catch {}
+    }
+    figma.ui.postMessage({
+      type: 'preview-canvas-dismissed',
+      count: count
     });
   }
 
@@ -768,6 +886,10 @@ if (figma.editorType === 'figma') {
       sendPreview();
     } else if (msg.type === 'serialize-and-commit') {
       const payload = serializeCurrentPage();
+      const nativeSvg = await exportNativePageSvg();
+      if (nativeSvg) {
+        (payload as any).previewSvg = nativeSvg;
+      }
       const thumbnails = await generateVisualPreview();
       if (thumbnails) {
         (payload as any).thumbnails = thumbnails;
@@ -778,6 +900,7 @@ if (figma.editorType === 'figma') {
         repo: msg.repo,
         branch: msg.branch,
         payload: payload,
+        nativeSvg: nativeSvg,
         message: msg.summary || `GitLayer: Sync "${figma.currentPage.name}"`,
         source: msg.source
       });
@@ -787,12 +910,14 @@ if (figma.editorType === 'figma') {
       } catch (err: any) {
         figma.ui.postMessage({ type: 'pull-error', message: err?.message ?? 'Unknown error.' });
       }
-    } else if (msg.type === 'import-commit-to-canvas') {
+    } else if (msg.type === 'import-commit-to-canvas' || msg.type === 'preview-commit-on-canvas') {
       try {
         await importCommitBesideCurrent(msg.doc, msg.commit);
       } catch (err: any) {
-        figma.ui.postMessage({ type: 'import-error', message: err?.message ?? 'Import failed.' });
+        figma.ui.postMessage({ type: 'preview-canvas-error', message: err?.message ?? 'Canvas preview failed.' });
       }
+    } else if (msg.type === 'dismiss-canvas-preview') {
+      dismissCanvasPreview();
     } else if (msg.type === 'cancel') {
       figma.closePlugin();
     }

@@ -867,7 +867,9 @@
             <span id="diff-header-title" style="color: #e6edf3; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Diagram Preview</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-            <div id="diff-header-history-actions" style="display: none; align-items: center; gap: 8px;">
+            <div id="diff-header-history-actions" style="display: none; align-items: center; gap: 6px;">
+              <button id="btn-preview-canvas" style="background: #238636; border: 1px solid rgba(240,246,252,0.1); color: #ffffff; font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500;" title="Render this historical commit on Figma canvas beside current design">👁️ View on Canvas</button>
+              <button id="btn-dismiss-canvas" style="background: transparent; border: 1px solid #444; color: #8b949e; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; display: none;" title="Remove preview frame from canvas">✕ Dismiss</button>
               <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
             </div>
             <div style="display: flex; align-items: center; background: #16171a; border: 1px solid #333; border-radius: 4px; padding: 2px;">
@@ -1424,6 +1426,7 @@
     let activeMainTab = 'changes'; // 'changes' | 'history'
     let latestCanvasPayload = null;
     let latestCanvasThumbnails = null;
+    let latestNativeSvg = null;
     let selectedCommit = null;
     let selectedCommitDoc = null;
 
@@ -1517,6 +1520,19 @@
     document.getElementById('btn-zoom-out').onclick = (e) => { e.stopPropagation(); setZoom(zoomScale * 0.8); };
     document.getElementById('btn-zoom-reset').onclick = (e) => { e.stopPropagation(); resetZoom(); };
     document.getElementById('zoom-level-badge').onclick = (e) => { e.stopPropagation(); resetZoom(); };
+
+    // Format native SVG string exported by Figma C++ engine for optimal responsive display
+    function formatNativeSvg(rawSvg) {
+      if (!rawSvg) return '';
+      let svgStr = rawSvg.trim();
+      if (svgStr.includes('<svg')) {
+        svgStr = svgStr.replace(/<svg\b([^>]*)>/i, (match, attrs) => {
+          let cleanAttrs = attrs.replace(/\b(width|height)=["'][^"']*["']/gi, '');
+          return `<svg ${cleanAttrs} style="max-width: 100%; max-height: 480px; width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 8px 30px rgba(0,0,0,0.6)); border-radius: 6px;">`;
+        });
+      }
+      return svgStr;
+    }
 
     // High-performance visual thumbnail renderer for live canvas and commits
     function renderThumbnailsToSvg(thumbnails) {
@@ -1798,7 +1814,19 @@
         const topNodes = latestCanvasPayload?.document?.children?.[0]?.children || [];
         let rendered = false;
 
-        if (latestCanvasThumbnails && latestCanvasThumbnails.length > 0) {
+        // 1. Native vector SVG from Figma C++ engine
+        if (latestNativeSvg) {
+          svg.innerHTML = formatNativeSvg(latestNativeSvg);
+          svg.style.display = 'flex';
+          img.style.display = 'none';
+          empty.style.display = 'none';
+          meta.style.display = 'block';
+          meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} on canvas (Vector)`;
+          rendered = true;
+        }
+
+        // 2. Fallback thumbnails
+        if (!rendered && latestCanvasThumbnails && latestCanvasThumbnails.length > 0) {
           const svgContent = renderThumbnailsToSvg(latestCanvasThumbnails);
           if (svgContent) {
             svg.innerHTML = svgContent;
@@ -1812,6 +1840,7 @@
           }
         }
 
+        // 3. Fallback to node rendering
         if (!rendered) {
           if (topNodes.length > 0) {
             svg.innerHTML = renderNodesToSvg(topNodes);
@@ -1846,13 +1875,25 @@
         const shortSha = selectedCommit ? selectedCommit.sha.substring(0, 7) : '';
         const msg = selectedCommit ? selectedCommit.commit.message.split('\n')[0] : '';
         document.getElementById('diff-header-title').innerText = selectedCommit ? `${shortSha} • ${msg}` : 'Commit History';
-        document.getElementById('diff-header-history-actions').style.display = 'flex';
+        document.getElementById('diff-header-history-actions').style.display = selectedCommit ? 'flex' : 'none';
 
         let rendered = false;
         if (selectedCommitDoc) {
           const topNodes = selectedCommitDoc?.document?.children?.[0]?.children || [];
 
-          if (selectedCommitDoc.thumbnails && selectedCommitDoc.thumbnails.length > 0) {
+          // 1. Native vector SVG stored in snapshot
+          if (selectedCommitDoc.previewSvg) {
+            svg.innerHTML = formatNativeSvg(selectedCommitDoc.previewSvg);
+            svg.style.display = 'flex';
+            img.style.display = 'none';
+            empty.style.display = 'none';
+            meta.style.display = 'block';
+            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha} (Vector)`;
+            rendered = true;
+          }
+
+          // 2. Fallback thumbnails
+          if (!rendered && selectedCommitDoc.thumbnails && selectedCommitDoc.thumbnails.length > 0) {
             const svgContent = renderThumbnailsToSvg(selectedCommitDoc.thumbnails);
             if (svgContent) {
               svg.innerHTML = svgContent;
@@ -1866,15 +1907,28 @@
             }
           }
 
+          // 3. Fallback for older commits with one-click Canvas Preview
           if (!rendered) {
             if (topNodes.length > 0) {
-              svg.innerHTML = renderNodesToSvg(topNodes);
-              svg.style.display = 'block';
+              const legacyNotice = `
+                <div style="width: 100%; max-width: 480px; margin-bottom: 8px; padding: 6px 12px; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: #8b949e;">
+                  <span>ℹ️ Legacy snapshot without vector preview</span>
+                  <button id="btn-legacy-preview-canvas" style="background: #238636; border: none; color: #fff; font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 4px; cursor: pointer;">👁️ View on Canvas</button>
+                </div>
+              `;
+              svg.innerHTML = legacyNotice + renderNodesToSvg(topNodes);
+              svg.style.display = 'flex';
+              svg.style.flexDirection = 'column';
               img.style.display = 'none';
               empty.style.display = 'none';
               meta.style.display = 'block';
               meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha}`;
               rendered = true;
+
+              setTimeout(() => {
+                const legacyBtn = document.getElementById('btn-legacy-preview-canvas');
+                if (legacyBtn) legacyBtn.onclick = triggerCanvasPreview;
+              }, 50);
             } else {
               img.style.display = 'none';
               svg.style.display = 'none';
@@ -2073,10 +2127,64 @@
         const data = await res.json();
         const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
         selectedCommitDoc = JSON.parse(jsonStr);
+
+        // Check if standalone preview.svg was committed to root of this commit if previewSvg not in json
+        if (!selectedCommitDoc.previewSvg) {
+          try {
+            const svgUrl = `https://api.github.com/repos/${currentRepo}/contents/preview.svg?ref=${commit.sha}`;
+            const svgRes = await fetch(svgUrl, {
+              headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' }
+            });
+            if (svgRes.ok) {
+              const svgData = await svgRes.json();
+              const svgString = decodeURIComponent(escape(atob(svgData.content.replace(/\n/g, ''))));
+              if (svgString && svgString.includes('<svg')) {
+                selectedCommitDoc.previewSvg = svgString;
+              }
+            }
+          } catch (svgErr) {}
+        }
+
         updateRightPanelView();
       } catch (e) {
         console.error("Failed to load commit snapshot", e);
       }
+    }
+
+    function triggerCanvasPreview() {
+      if (!selectedCommit || !selectedCommitDoc) return;
+      const btn = document.getElementById('btn-preview-canvas');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = '⏳ Loading...';
+      }
+      const status = document.getElementById('status-text');
+      if (status) {
+        status.innerText = `Placing historical version beside canvas in Figma...`;
+        status.style.color = '#aaa';
+      }
+
+      parent.postMessage({
+        pluginMessage: {
+          type: 'preview-commit-on-canvas',
+          doc: selectedCommitDoc,
+          commit: {
+            sha: selectedCommit.sha,
+            message: selectedCommit.commit.message
+          }
+        }
+      }, '*');
+    }
+
+    const btnPreviewCanvas = document.getElementById('btn-preview-canvas');
+    if (btnPreviewCanvas) {
+      btnPreviewCanvas.onclick = triggerCanvasPreview;
+    }
+    const btnDismissCanvas = document.getElementById('btn-dismiss-canvas');
+    if (btnDismissCanvas) {
+      btnDismissCanvas.onclick = () => {
+        parent.postMessage({ pluginMessage: { type: 'dismiss-canvas-preview' } }, '*');
+      };
     }
 
     // Pull historical version and import beside existing canvas nodes
@@ -2304,6 +2412,7 @@
       if (msg.type === 'preview-payload') {
         latestCanvasPayload = msg.payload;
         latestCanvasThumbnails = msg.thumbnails || null;
+        latestNativeSvg = msg.nativeSvg || null;
         if (activeMainTab === 'changes') {
           updateRightPanelView();
         }
@@ -2317,7 +2426,7 @@
         status.style.color = '#aaa';
 
         try {
-          const { pat, repo, branch, payload, message } = msg;
+          const { pat, repo, branch, payload, nativeSvg, message } = msg;
 
           const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
           const url = `https://api.github.com/repos/${repo}/contents/figma-snapshot.json`;
@@ -2337,30 +2446,96 @@
             body: JSON.stringify(body)
           });
 
-          if (res.ok) {
-            status.innerText = 'Commit successful! 🎉';
-            status.style.color = '#89d185';
-            if (isMin) {
-              document.getElementById('min-commit-summary').value = '';
-              document.getElementById('min-commit-desc').value = '';
-              document.getElementById('btn-min-push').disabled = false;
-              setTimeout(() => { document.getElementById('btn-min-toggle-commit').click(); status.innerText = ''; }, 1500);
-            } else {
-              document.getElementById('commit-summary').value = '';
-              document.getElementById('commit-desc').value = '';
-              document.getElementById('commit-btn').disabled = false;
-            }
-            // Refresh diff preview after commit
-            parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
-          } else {
+          if (!res.ok) {
             const error = await res.json().catch(() => ({}));
             throw new Error(error.message || 'GitHub push failed');
           }
+
+          // If native SVG export is available, also commit preview.svg so it renders in GitHub Web UI
+          if (nativeSvg) {
+            try {
+              const svgBase64 = btoa(unescape(encodeURIComponent(nativeSvg)));
+              const svgUrl = `https://api.github.com/repos/${repo}/contents/preview.svg`;
+              let svgSha = null;
+              try {
+                const getSvgRes = await fetch(`${svgUrl}?ref=${branch || 'main'}`, { headers: { 'Authorization': `Bearer ${pat}` } });
+                if (getSvgRes.ok) svgSha = (await getSvgRes.json()).sha;
+              } catch (e) {}
+              const svgBody = { message: `GitLayer: Update preview.svg`, content: svgBase64, branch: branch || 'main' };
+              if (svgSha) svgBody.sha = svgSha;
+              await fetch(svgUrl, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${pat}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
+                body: JSON.stringify(svgBody)
+              });
+            } catch (svgErr) {
+              console.warn('[GitLayer] Could not push preview.svg separately', svgErr);
+            }
+          }
+
+          status.innerText = 'Commit successful! 🎉';
+          status.style.color = '#89d185';
+          if (isMin) {
+            document.getElementById('min-commit-summary').value = '';
+            document.getElementById('min-commit-desc').value = '';
+            document.getElementById('btn-min-push').disabled = false;
+            setTimeout(() => { document.getElementById('btn-min-toggle-commit').click(); status.innerText = ''; }, 1500);
+          } else {
+            document.getElementById('commit-summary').value = '';
+            document.getElementById('commit-desc').value = '';
+            document.getElementById('commit-btn').disabled = false;
+          }
+          // Refresh diff preview after commit
+          parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
         } catch (e) {
           status.innerText = 'Error: ' + e.message;
           status.style.color = '#f14c4c';
           if (isMin) document.getElementById('btn-min-push').disabled = false;
           else document.getElementById('commit-btn').disabled = false;
+        }
+      }
+
+      // Preview historical version side-by-side on canvas
+      if (msg.type === 'preview-canvas-progress') {
+        const status = document.getElementById('status-text');
+        if (status) { status.innerText = msg.message; status.style.color = '#aaa'; }
+      }
+
+      if (msg.type === 'preview-canvas-success') {
+        const btn = document.getElementById('btn-preview-canvas');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = '👁️ View on Canvas';
+        }
+        const dismissBtn = document.getElementById('btn-dismiss-canvas');
+        if (dismissBtn) dismissBtn.style.display = 'inline-block';
+        const status = document.getElementById('status-text');
+        if (status) {
+          status.innerText = `✅ Preview placed beside canvas in Figma!`;
+          status.style.color = '#89d185';
+        }
+      }
+
+      if (msg.type === 'preview-canvas-dismissed') {
+        const dismissBtn = document.getElementById('btn-dismiss-canvas');
+        if (dismissBtn) dismissBtn.style.display = 'none';
+        const status = document.getElementById('status-text');
+        if (status) {
+          status.innerText = 'Canvas preview removed';
+          status.style.color = '#8b949e';
+        }
+      }
+
+      if (msg.type === 'preview-canvas-error') {
+        const btn = document.getElementById('btn-preview-canvas');
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = '👁️ View on Canvas';
+        }
+        const status = document.getElementById('status-text');
+        if (status) {
+          status.innerText = '❌ ' + msg.message;
+          status.style.color = '#f14c4c';
         }
       }
 
