@@ -2,7 +2,7 @@
 // GitLayer - Main Plugin Code
 // Uses Figma REST API for full-fidelity serialization and custom deserializer for restoration
 if (figma.editorType === 'figma') {
-    figma.showUI(__html__, { width: 700, height: 56 });
+    figma.showUI(__html__, { width: 320, height: 420 });
     // ─────────────────────────────────────────────────────────────────────────────
     // INIT
     // ─────────────────────────────────────────────────────────────────────────────
