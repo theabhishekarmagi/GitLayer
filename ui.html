@@ -1606,19 +1606,46 @@
         return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
       }
 
-      function renderNode(n, parentBgIsDark) {
+      function findBgColorUnder(node, allNodes, currentIndex) {
+        const cx = (node.x || 0) + (node.width || 0) / 2;
+        const cy = (node.y || 0) + (node.height || 0) / 2;
+
+        for (let j = currentIndex - 1; j >= 0; j--) {
+          const prev = allNodes[j];
+          if (!prev || prev.type === 'SLICE' || prev.type === 'TEXT') continue;
+          if (typeof prev.x !== 'number' || typeof prev.y !== 'number' || !prev.width || !prev.height) continue;
+
+          if (cx >= prev.x && cx <= prev.x + prev.width && cy >= prev.y && cy <= prev.y + prev.height) {
+            const solid = (prev.fills || []).find(f => f.type === 'SOLID' && f.color && f.visible !== false);
+            if (solid) {
+              const cr = Math.round(solid.color.r * 255);
+              const cg = Math.round(solid.color.g * 255);
+              const cb = Math.round(solid.color.b * 255);
+              const lum = getLuminance(cr, cg, cb);
+              return { isDark: lum < 0.55, color: `rgb(${cr},${cg},${cb})` };
+            }
+          }
+        }
+        return { isDark: true, color: '#141518' };
+      }
+
+      function renderNode(n, i, parentBgIsDark) {
         if (!n || n.visible === false || n.type === 'SLICE') return '';
         const x = n.x ?? n.absoluteBoundingBox?.x ?? 0;
         const y = n.y ?? n.absoluteBoundingBox?.y ?? 0;
         const w = n.width ?? n.absoluteBoundingBox?.width ?? 100;
         const h = n.height ?? n.absoluteBoundingBox?.height ?? 100;
-        const r = n.cornerRadius || 0;
+        const r = n.cornerRadius || (n.rectangleCornerRadii ? n.rectangleCornerRadii[0] : 0) || 0;
+
+        if (w <= 0 && h <= 0) return '';
+
+        const bgInfo = findBgColorUnder(n, renderable, i);
+        const effectiveBgIsDark = bgInfo ? bgInfo.isDark : parentBgIsDark;
 
         // Fills
         let fill = 'none';
         let fillOpacity = n.opacity ?? 1;
         let hasSolidFill = false;
-        let fillIsDark = false;
 
         if (n.fills && Array.isArray(n.fills) && n.fills.length > 0) {
           const solid = n.fills.find(f => f.type === 'SOLID' && f.color && f.visible !== false);
@@ -1629,11 +1656,8 @@
             const cb = Math.round(solid.color.b * 255);
             fill = `rgb(${cr}, ${cg}, ${cb})`;
             if (solid.opacity !== undefined) fillOpacity = solid.opacity;
-            fillIsDark = getLuminance(cr, cg, cb) < 0.55;
           }
         }
-
-        const currentBgIsDark = hasSolidFill ? fillIsDark : parentBgIsDark;
 
         // Image fill check (handles raw image hash / icons from commits)
         const imgFill = (n.fills || []).find(f => f.type === 'IMAGE');
@@ -1642,19 +1666,24 @@
             return `<image href="${imgFill.dataUrl}" xlink:href="${imgFill.dataUrl}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" />`;
           }
           const lower = (n.name || '').toLowerCase();
+          const iconColor = effectiveBgIsDark ? '#ffffff' : '#24292e';
+
           if (lower.includes('github')) {
-            return `<g transform="translate(${x}, ${y})"><svg viewBox="0 0 24 24" width="${w}" height="${h}"><path fill="${parentBgIsDark ? '#ffffff' : '#24292e'}" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg></g>`;
+            return `<g transform="translate(${x}, ${y})"><svg viewBox="0 0 24 24" width="${w}" height="${h}"><path fill="${iconColor}" d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg></g>`;
           }
           if (lower.includes('fork') || lower.includes('branch')) {
-            return `<g transform="translate(${x}, ${y})"><svg viewBox="0 0 16 16" width="${w}" height="${h}"><path fill="${parentBgIsDark ? '#ffffff' : '#24292e'}" fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg></g>`;
+            return `<g transform="translate(${x}, ${y})"><svg viewBox="0 0 16 16" width="${w}" height="${h}"><path fill="${iconColor}" fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg></g>`;
           }
           if (lower.includes('repo')) {
-            return `<g transform="translate(${x}, ${y})"><svg viewBox="0 0 16 16" width="${w}" height="${h}"><path fill="${parentBgIsDark ? '#ffffff' : '#24292e'}" d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 110-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1h-8a1 1 0 00-1 1v6.708A2.486 2.486 0 014.5 9h8V1.5z"/></svg></g>`;
+            return `<g transform="translate(${x}, ${y})"><svg viewBox="0 0 16 16" width="${w}" height="${h}"><path fill="${iconColor}" d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 110-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1h-8a1 1 0 00-1 1v6.708A2.486 2.486 0 014.5 9h8V1.5z"/></svg></g>`;
           }
-          if (lower.includes('image')) {
-            return `<g transform="translate(${x}, ${y})"><rect width="${w}" height="${h}" rx="6" fill="#1c2128" stroke="#30363d" /><text x="${w/2}" y="${h/2}" fill="#8b949e" font-size="${Math.min(18, Math.max(12, w*0.04))}px" text-anchor="middle" dominant-baseline="middle" font-family="sans-serif">🖼️ ${escapeHtml(n.name || 'Image')}</text></g>`;
+          if (lower.includes('expand') || lower.includes('fullscreen') || lower.includes('maximize')) {
+            return `<g transform="translate(${x}, ${y})"><svg viewBox="0 0 16 16" width="${w}" height="${h}"><path fill="${iconColor}" fill-rule="evenodd" d="M1.5 1a.5.5 0 00-.5.5v4a.5.5 0 001 0V2.5h3a.5.5 0 000-1h-3.5zm13 0a.5.5 0 00-.5.5V2.5h-3a.5.5 0 000 1h3v3a.5.5 0 001 0v-4a.5.5 0 00-.5-.5zM1 10.5a.5.5 0 01.5-.5h3a.5.5 0 010 1H2v2.5a.5.5 0 01-1 0v-3.5zm14 0a.5.5 0 00-.5-.5h-3a.5.5 0 000 1H14v2.5a.5.5 0 001 0v-3.5z"/></svg></g>`;
           }
-          return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="#21262d" stroke="#30363d" />`;
+          const placeholderBg = effectiveBgIsDark ? '#1c2128' : '#f6f8fa';
+          const placeholderBorder = effectiveBgIsDark ? '#30363d' : '#d0d7de';
+          const placeholderText = effectiveBgIsDark ? '#8b949e' : '#57606a';
+          return `<g transform="translate(${x}, ${y})"><rect width="${w}" height="${h}" rx="${Math.min(r, 8)}" fill="${placeholderBg}" stroke="${placeholderBorder}" /><text x="${w/2}" y="${h/2}" fill="${placeholderText}" font-size="${Math.min(18, Math.max(12, w*0.04))}px" text-anchor="middle" dominant-baseline="central" font-family="sans-serif">🖼️ ${escapeHtml(n.name || 'Image')}</text></g>`;
         }
 
         // Strokes
@@ -1678,12 +1707,20 @@
           const align = n.style?.textAlignHorizontal || 'LEFT';
           const fontFam = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
-          // Text color: use explicit solid fill if available; otherwise ensure high contrast
-          let textColor;
-          if (hasSolidFill) {
-            textColor = fill;
+          // Text color: ensure contrast with the background directly underneath
+          let textColor = fill;
+          if (!hasSolidFill) {
+            textColor = effectiveBgIsDark ? '#ffffff' : '#1f2328';
           } else {
-            textColor = parentBgIsDark ? '#e6edf3' : '#1f2328';
+            const cr = parseInt(fill.slice(4).split(',')[0]) || 0;
+            const cg = parseInt(fill.split(',')[1]) || 0;
+            const cb = parseInt(fill.split(',')[2]) || 0;
+            const textLum = getLuminance(cr, cg, cb);
+            if (effectiveBgIsDark && textLum < 0.25) {
+              textColor = '#ffffff'; // Light text against dark bg
+            } else if (!effectiveBgIsDark && textLum > 0.75) {
+              textColor = '#1f2328'; // Dark text against light bg
+            }
           }
 
           let textX = x;
@@ -1696,14 +1733,14 @@
             textAnchor = 'end';
           }
 
-          const rawChars = n.characters || '';
-          const rawLines = rawChars.split('\n');
-          const lineHeight = n.style?.lineHeightPx || Math.round(fs * 1.3);
-          const tspans = rawLines.map((l, i) => 
-            `<tspan x="${textX}" dy="${i === 0 ? 0 : lineHeight}">${escapeHtml(l)}</tspan>`
+          const rawChars = (n.characters || '').replace(/\r\n/g, '\n').replace(/\n+$/, '');
+          const rawLines = rawChars ? rawChars.split('\n') : [];
+          const lineHeight = n.style?.lineHeightPx || Math.round(fs * 1.25);
+          const tspans = rawLines.map((l, lineIdx) => 
+            `<tspan x="${textX}" dy="${lineIdx === 0 ? 0 : lineHeight}">${escapeHtml(l)}</tspan>`
           ).join('');
 
-          return `<text x="${textX}" y="${y + fs * 0.85}" fill="${textColor}" fill-opacity="${fillOpacity}" font-size="${fs}px" font-family='${fontFam}' font-weight="${fw}" font-style="${fontStyle}" text-anchor="${textAnchor}" xml:space="preserve">${tspans}</text>`;
+          return `<text x="${textX}" y="${y}" fill="${textColor}" fill-opacity="${fillOpacity}" font-size="${fs}px" font-family='${fontFam}' font-weight="${fw}" font-style="${fontStyle}" text-anchor="${textAnchor}" dominant-baseline="hanging" xml:space="preserve">${tspans}</text>`;
         }
 
         // ELLIPSE
@@ -1722,7 +1759,7 @@
         // VECTOR or BOOLEAN_OPERATION (Icons, Logos, Shapes)
         if (n.type === 'VECTOR' || n.type === 'BOOLEAN_OPERATION') {
           if (n.vectorPaths && Array.isArray(n.vectorPaths) && n.vectorPaths.length > 0) {
-            const vectorFill = hasSolidFill ? fill : (parentBgIsDark ? '#e6edf3' : '#24292f');
+            const vectorFill = hasSolidFill ? fill : (effectiveBgIsDark ? '#e6edf3' : '#24292f');
             const paths = n.vectorPaths.map(vp => 
               `<path d="${vp.data}" fill="${vectorFill}" fill-opacity="${fillOpacity}" fill-rule="${vp.windingRule === 'EVENODD' ? 'evenodd' : 'nonzero'}" stroke="${stroke}" stroke-width="${strokeW}" />`
             ).join('');
@@ -1743,18 +1780,18 @@
               d = `M ${verts[0].x} ${verts[0].y} ` + verts.slice(1).map(v => `L ${v.x} ${v.y}`).join(' ');
             }
             if (d) {
-              const vectorFill = hasSolidFill ? fill : (parentBgIsDark ? '#e6edf3' : '#24292f');
+              const vectorFill = hasSolidFill ? fill : (effectiveBgIsDark ? '#e6edf3' : '#24292f');
               return `<g transform="translate(${x}, ${y})"><path d="${d}" fill="${vectorFill}" fill-opacity="${fillOpacity}" stroke="${stroke !== 'none' ? stroke : '#8b949e'}" stroke-width="${Math.max(1, strokeW)}" /></g>`;
             }
           }
 
-          const iconColor = hasSolidFill ? fill : (parentBgIsDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)');
+          const iconColor = hasSolidFill ? fill : (effectiveBgIsDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)');
           return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${Math.min(r, 4)}" fill="none" stroke="${iconColor}" stroke-width="1.5"${strokeDash} opacity="0.8" />`;
         }
 
         // Containers / Frames with children
         if (n.children && n.children.length > 0) {
-          const innerSvg = n.children.map(c => renderNode(c, currentBgIsDark)).join('');
+          const innerSvg = n.children.map((c, childIdx) => renderNode(c, childIdx, effectiveBgIsDark)).join('');
           return `
             <g transform="translate(${x}, ${y})">
               <rect x="0" y="0" width="${w}" height="${h}" rx="${r}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}"${strokeDash} />
@@ -1768,7 +1805,7 @@
         return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${strokeW}"${strokeDash} />`;
       }
 
-      const elements = renderable.map(n => renderNode(n, true)).join('');
+      const elements = renderable.map((n, i) => renderNode(n, i, true)).join('');
       return `<svg viewBox="${vbX} ${vbY} ${vbW} ${vbH}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" style="max-width: 100%; max-height: 480px; width: 100%; height: 100%; filter: drop-shadow(0 8px 30px rgba(0,0,0,0.6)); border-radius: 6px;">${elements}</svg>`;
     }
 
@@ -2127,24 +2164,6 @@
         const data = await res.json();
         const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
         selectedCommitDoc = JSON.parse(jsonStr);
-
-        // Check if standalone preview.svg was committed to root of this commit if previewSvg not in json
-        if (!selectedCommitDoc.previewSvg) {
-          try {
-            const svgUrl = `https://api.github.com/repos/${currentRepo}/contents/preview.svg?ref=${commit.sha}`;
-            const svgRes = await fetch(svgUrl, {
-              headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' }
-            });
-            if (svgRes.ok) {
-              const svgData = await svgRes.json();
-              const svgString = decodeURIComponent(escape(atob(svgData.content.replace(/\n/g, ''))));
-              if (svgString && svgString.includes('<svg')) {
-                selectedCommitDoc.previewSvg = svgString;
-              }
-            }
-          } catch (svgErr) {}
-        }
-
         updateRightPanelView();
       } catch (e) {
         console.error("Failed to load commit snapshot", e);
