@@ -1603,7 +1603,7 @@
             if (getRes.ok) sha = (await getRes.json()).sha;
           } catch (e) {}
 
-          const body: any = { message, content: contentBase64, branch: branch || 'main' };
+          const body = { message, content: contentBase64, branch: branch || 'main' };
           if (sha) body.sha = sha;
 
           const res = await fetch(url, {
