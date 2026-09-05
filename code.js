@@ -425,48 +425,72 @@ if (figma.editorType === 'figma') {
         if (data.clipsContent !== undefined && 'clipsContent' in node)
             node.clipsContent = data.clipsContent;
         // Fills
-        if ('fills' in node && Array.isArray(data.fills) && data.fills.length > 0) {
-            const paints = [];
-            for (const fill of data.fills) {
-                if (fill.type === 'SOLID' && fill.color) {
-                    paints.push({
-                        type: 'SOLID',
-                        color: { r: fill.color.r, g: fill.color.g, b: fill.color.b },
-                        opacity: fill.opacity ?? 1,
-                        visible: fill.visible ?? true,
-                        blendMode: fill.blendMode ?? 'NORMAL'
-                    });
+        if ('fills' in node) {
+            if (Array.isArray(data.fills) && data.fills.length > 0) {
+                const paints = [];
+                for (const fill of data.fills) {
+                    if (fill.type === 'SOLID' && fill.color) {
+                        paints.push({
+                            type: 'SOLID',
+                            color: { r: fill.color.r, g: fill.color.g, b: fill.color.b },
+                            opacity: fill.opacity ?? 1,
+                            visible: fill.visible ?? true,
+                            blendMode: fill.blendMode ?? 'NORMAL'
+                        });
+                    }
+                    else if (['GRADIENT_LINEAR', 'GRADIENT_RADIAL', 'GRADIENT_ANGULAR', 'GRADIENT_DIAMOND'].includes(fill.type)) {
+                        paints.push({
+                            type: fill.type,
+                            gradientTransform: fill.gradientTransform ?? [[1, 0, 0], [0, 1, 0]],
+                            gradientStops: (fill.gradientStops || []).map((s) => ({
+                                position: s.position,
+                                color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 }
+                            })),
+                            visible: fill.visible ?? true,
+                            opacity: fill.opacity ?? 1,
+                            blendMode: fill.blendMode ?? 'NORMAL'
+                        });
+                    }
+                    else if (fill.type === 'IMAGE' && fill.imageHash) {
+                        try {
+                            const img = figma.getImageByHash(fill.imageHash);
+                            if (img) {
+                                paints.push({
+                                    type: 'IMAGE',
+                                    imageHash: fill.imageHash,
+                                    scaleMode: fill.scaleMode ?? 'FILL',
+                                    visible: fill.visible ?? true,
+                                    opacity: fill.opacity ?? 1
+                                });
+                            }
+                        }
+                        catch (e) { }
+                    }
                 }
-                else if (['GRADIENT_LINEAR', 'GRADIENT_RADIAL', 'GRADIENT_ANGULAR', 'GRADIENT_DIAMOND'].includes(fill.type)) {
-                    paints.push({
-                        type: fill.type,
-                        gradientTransform: fill.gradientTransform ?? [[1, 0, 0], [0, 1, 0]],
-                        gradientStops: (fill.gradientStops || []).map((s) => ({
-                            position: s.position,
-                            color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a ?? 1 }
-                        })),
-                        visible: fill.visible ?? true,
-                        opacity: fill.opacity ?? 1,
-                        blendMode: fill.blendMode ?? 'NORMAL'
-                    });
-                }
-            }
-            if (paints.length > 0)
                 node.fills = paints;
+            }
+            else {
+                // Clear default white/grey Figma fills on transparent frames and shapes
+                node.fills = [];
+            }
         }
         // Strokes
-        if ('strokes' in node && Array.isArray(data.strokes) && data.strokes.length > 0) {
-            const sp = data.strokes
-                .filter((s) => s.type === 'SOLID' && s.color)
-                .map((s) => ({
-                type: 'SOLID',
-                color: { r: s.color.r, g: s.color.g, b: s.color.b },
-                opacity: s.opacity ?? 1,
-                visible: s.visible ?? true,
-                blendMode: s.blendMode ?? 'NORMAL'
-            }));
-            if (sp.length > 0)
+        if ('strokes' in node) {
+            if (Array.isArray(data.strokes) && data.strokes.length > 0) {
+                const sp = data.strokes
+                    .filter((s) => s.type === 'SOLID' && s.color)
+                    .map((s) => ({
+                    type: 'SOLID',
+                    color: { r: s.color.r, g: s.color.g, b: s.color.b },
+                    opacity: s.opacity ?? 1,
+                    visible: s.visible ?? true,
+                    blendMode: s.blendMode ?? 'NORMAL'
+                }));
                 node.strokes = sp;
+            }
+            else {
+                node.strokes = [];
+            }
         }
         if ('strokeWeight' in node && data.strokeWeight !== undefined)
             node.strokeWeight = data.strokeWeight;
@@ -687,22 +711,43 @@ if (figma.editorType === 'figma') {
                 case 'VECTOR': {
                     const v = figma.createVector();
                     parent.appendChild(v);
-                    applyCommonProps(v, data);
-                    if (data.vectorPaths) {
+                    let vectorSet = false;
+                    if (data.vectorPaths && Array.isArray(data.vectorPaths) && data.vectorPaths.length > 0) {
                         try {
                             v.vectorPaths = data.vectorPaths;
+                            vectorSet = true;
                         }
-                        catch { }
+                        catch (vpErr) {
+                            console.warn('[GitLayer] vectorPaths failed', vpErr);
+                        }
                     }
-                    else if (data.vectorNetwork) {
+                    if (!vectorSet && data.vectorNetwork) {
                         try {
-                            v.vectorNetwork = data.vectorNetwork;
+                            if (typeof v.setVectorNetworkAsync === 'function') {
+                                await v.setVectorNetworkAsync(data.vectorNetwork);
+                            }
+                            else {
+                                v.vectorNetwork = data.vectorNetwork;
+                            }
                         }
-                        catch { }
+                        catch (vnErr) {
+                            console.warn('[GitLayer] vectorNetwork failed', vnErr);
+                        }
                     }
+                    applyCommonProps(v, data);
                     return v;
                 }
                 case 'BOOLEAN_OPERATION': {
+                    if (data.vectorPaths && Array.isArray(data.vectorPaths) && data.vectorPaths.length > 0) {
+                        const v = figma.createVector();
+                        parent.appendChild(v);
+                        try {
+                            v.vectorPaths = data.vectorPaths;
+                        }
+                        catch (e) { }
+                        applyCommonProps(v, data);
+                        return v;
+                    }
                     const kids = [];
                     if (data.children) {
                         for (const c of data.children) {
@@ -711,11 +756,20 @@ if (figma.editorType === 'figma') {
                                 kids.push(b);
                         }
                     }
-                    if (kids.length < 2)
+                    if (kids.length === 0)
                         return null;
-                    const flat = figma.flatten(kids, parent);
-                    applyCommonProps(flat, data);
-                    return flat;
+                    if (kids.length === 1) {
+                        applyCommonProps(kids[0], data);
+                        return kids[0];
+                    }
+                    try {
+                        const flat = figma.flatten(kids, parent);
+                        applyCommonProps(flat, data);
+                        return flat;
+                    }
+                    catch {
+                        return null;
+                    }
                 }
                 default:
                     console.log('[GitLayer] Skipping unsupported type:', data.type);
@@ -889,7 +943,7 @@ if (figma.editorType === 'figma') {
             tempFrame.setPluginData('gitlayer_preview', 'true');
             tempFrame.x = -999999;
             tempFrame.y = -999999;
-            tempFrame.fills = [{ type: 'SOLID', color: { r: 0.08, g: 0.08, b: 0.09 } }];
+            tempFrame.fills = [];
             tempFrame.clipsContent = false;
             figma.currentPage.appendChild(tempFrame);
             for (const nodeData of topNodes) {
@@ -1007,6 +1061,7 @@ if (figma.editorType === 'figma') {
                 payload.thumbnails = thumbnails;
             }
             try {
+                await figma.currentPage.loadAsync();
                 const pageBytes = await figma.currentPage.exportAsync({
                     format: 'PNG',
                     constraint: { type: 'SCALE', value: 2 }
