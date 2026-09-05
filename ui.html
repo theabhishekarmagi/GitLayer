@@ -1481,17 +1481,10 @@
               <span style="font-weight: 500; color: #e6edf3; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(message)}">${escapeHtml(message)}</span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-              <button id="btn-detail-import" class="btn-item-import" style="padding: 4px 10px; font-size: 11px;" title="Import this version side-by-side on canvas without altering your current design">+ Import to Canvas</button>
-              <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 4px 8px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
-              <a href="https://github.com/${currentRepo}/commit/${commit.sha}" target="_blank" style="color: #58a6ff; font-size: 11px; text-decoration: none; margin-left: 2px;">View ↗</a>
+              <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
             </div>
           </div>
         `;
-
-        const detailImport = document.getElementById('btn-detail-import');
-        if (detailImport) {
-          detailImport.onclick = () => importCommitToCanvas(commit, detailImport);
-        }
 
         const detailRollback = document.getElementById('btn-detail-rollback');
         if (detailRollback) {
@@ -1865,8 +1858,6 @@
           b.disabled = false;
           b.innerText = '+ Import';
         });
-        const detailBtn = document.getElementById('btn-detail-import');
-        if (detailBtn) { detailBtn.disabled = false; detailBtn.innerText = '+ Import to Canvas'; }
       }
 
       if (msg.type === 'import-error') {
@@ -1879,8 +1870,6 @@
           b.disabled = false;
           b.innerText = '+ Import';
         });
-        const detailBtn = document.getElementById('btn-detail-import');
-        if (detailBtn) { detailBtn.disabled = false; detailBtn.innerText = '+ Import to Canvas'; }
       }
     };
   </script>
