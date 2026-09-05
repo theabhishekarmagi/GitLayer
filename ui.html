@@ -841,7 +841,6 @@
       <div class="ghd-diff">
         <div class="diff-header" id="diff-header-bar">
           <div style="display: flex; align-items: center; gap: 8px; overflow: hidden; max-width: 60%;">
-            <span id="diff-header-icon" style="font-size: 13px;">🖼️</span>
             <span id="diff-header-title" style="color: #e6edf3; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Diagram Preview</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
@@ -1565,7 +1564,6 @@
       const codeBox = document.getElementById('diff-code-container');
 
       if (activeMainTab === 'changes') {
-        document.getElementById('diff-header-icon').innerText = '🖼️';
         document.getElementById('diff-header-title').innerText = 'Canvas Diagram Preview';
         document.getElementById('diff-header-history-actions').style.display = 'none';
 
@@ -1614,7 +1612,6 @@
       } else if (activeMainTab === 'history') {
         const shortSha = selectedCommit ? selectedCommit.sha.substring(0, 7) : '';
         const msg = selectedCommit ? selectedCommit.commit.message.split('\n')[0] : '';
-        document.getElementById('diff-header-icon').innerText = '📦';
         document.getElementById('diff-header-title').innerText = selectedCommit ? `${shortSha} • ${msg}` : 'Commit History';
         document.getElementById('diff-header-history-actions').style.display = 'flex';
 
