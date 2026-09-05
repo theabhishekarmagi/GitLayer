@@ -805,7 +805,7 @@
       
       <div style="display: flex; align-items: center; gap: 12px; margin-right: 16px;">
         <div id="status-text" style="font-size: 12px; font-weight: normal; color: #aaa; margin-right: 4px;"></div>
-        <button id="btn-pull" style="background: transparent; border: 1px solid #444; color: #c9d1d9; font-size: 12px; padding: 4px 10px; border-radius: 4px; cursor: pointer;" title="Pull design from GitHub and restore on canvas">↓ Pull</button>
+        <button id="btn-pull" style="background: transparent; border: 1px solid #444; color: #c9d1d9; font-size: 12px; padding: 4px 10px; border-radius: 4px; cursor: pointer;" title="Pull design from GitHub and restore on canvas">Pull</button>
         <a href="#" id="btn-logout" style="color: #9E9E9E; font-size: 12px; text-decoration: none;">Sign out</a>
       </div>
       
@@ -874,10 +874,9 @@
           </div>
           <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
             <div id="diff-header-history-actions" style="display: none; align-items: center; gap: 6px;">
-              <button id="btn-preview-canvas" style="background: #238636; border: 1px solid rgba(240,246,252,0.1); color: #ffffff; font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500;" title="Render this historical commit on Figma canvas beside current design">👁️ View on Canvas</button>
-              <button id="btn-export-pdf" style="background: #21262d; border: 1px solid #30363d; color: #c9d1d9; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; display: none; align-items: center; gap: 4px;" title="Export vector PDF of this commit">📄 Export PDF</button>
-              <button id="btn-dismiss-canvas" style="background: transparent; border: 1px solid #444; color: #8b949e; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; display: none;" title="Remove preview frame from canvas">✕ Dismiss</button>
-              <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">↺ Rollback</button>
+              <button id="btn-preview-canvas" style="background: #238636; border: 1px solid rgba(240,246,252,0.1); color: #ffffff; font-size: 11px; padding: 3px 9px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: 500;" title="Render this historical commit on Figma canvas beside current design">View on Canvas</button>
+              <button id="btn-dismiss-canvas" style="background: transparent; border: 1px solid #444; color: #8b949e; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; display: none;" title="Remove preview frame from canvas">Dismiss</button>
+              <button id="btn-detail-rollback" style="background: transparent; border: 1px solid #555; color: #e6edf3; font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer;" title="Replace current canvas with this commit">Rollback</button>
             </div>
             <div style="display: flex; align-items: center; background: #16171a; border: 1px solid #333; border-radius: 4px; padding: 2px;">
               <button id="btn-toggle-diagram" class="view-toggle-btn active">Diagram</button>
@@ -1190,7 +1189,7 @@
         status.innerText = '❌ Pull failed: ' + e.message;
         status.style.color = '#f14c4c';
         btn.disabled = false;
-        btn.innerText = '↓ Pull';
+        btn.innerText = 'Pull';
       }
     });
 
@@ -1935,10 +1934,8 @@
       const empty = document.getElementById('diff-empty-state');
       const meta = document.getElementById('diff-diagram-meta');
       const codeBox = document.getElementById('diff-code-container');
-      const btnExportPdf = document.getElementById('btn-export-pdf');
 
       if (activeMainTab === 'changes') {
-        if (btnExportPdf) btnExportPdf.style.display = 'none';
         document.getElementById('diff-header-title').innerText = 'Canvas Diagram Preview';
         document.getElementById('diff-header-history-actions').style.display = 'none';
 
@@ -2028,10 +2025,6 @@
           const topNodes = selectedCommitDoc?.document?.children?.[0]?.children || [];
           const pdfBase64 = historyPdfCache.get(selectedCommit.sha) || selectedCommitDoc.previewPdf;
 
-          if (btnExportPdf) {
-            btnExportPdf.style.display = (pdfBase64 && selectedCommit) ? 'inline-flex' : 'none';
-          }
-
           // 1. Vector PDF rendered at high-resolution 3.5x scale on HTML5 Canvas
           if (pdfBase64 && typeof pdfjsLib !== 'undefined') {
             if (canvas) canvas.style.display = 'block';
@@ -2118,7 +2111,7 @@
             svg.innerHTML = `
               <div style="width: 100%; max-width: 480px; margin-bottom: 8px; padding: 6px 12px; background: #1c2128; border: 1px solid #30363d; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: #8b949e;">
                 <span>Snapshot preview unavailable</span>
-                <button id="btn-legacy-preview-canvas" style="background: #238636; border: none; color: #fff; font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 4px; cursor: pointer;">👁️ View on Canvas</button>
+                <button id="btn-legacy-preview-canvas" style="background: #238636; border: none; color: #fff; font-size: 10px; font-weight: 500; padding: 3px 8px; border-radius: 4px; cursor: pointer;">View on Canvas</button>
               </div>
             `;
             empty.style.display = 'none';
@@ -2142,7 +2135,6 @@
           }
         } else if (selectedCommit) {
           if (canvas) canvas.style.display = 'none';
-          if (btnExportPdf) btnExportPdf.style.display = 'none';
           img.style.display = 'none';
           svg.style.display = 'none';
           empty.style.display = 'block';
@@ -2157,7 +2149,6 @@
           resetZoom();
         } else {
           if (canvas) canvas.style.display = 'none';
-          if (btnExportPdf) btnExportPdf.style.display = 'none';
           img.style.display = 'none';
           svg.style.display = 'none';
           empty.style.display = 'block';
@@ -2186,43 +2177,10 @@
       } catch (e) {
         alert('Rollback failed: ' + e.message);
       } finally {
-        btn.innerText = '↺ Rollback';
+        btn.innerText = 'Rollback';
         btn.disabled = false;
       }
     };
-
-    // Export PDF button listener
-    const btnExportPdfEl = document.getElementById('btn-export-pdf');
-    if (btnExportPdfEl) {
-      btnExportPdfEl.onclick = () => {
-        if (!selectedCommit) return;
-        const pdfBase64 = historyPdfCache.get(selectedCommit.sha) || selectedCommitDoc?.previewPdf;
-        if (!pdfBase64) {
-          alert('Vector PDF is not available for this commit.');
-          return;
-        }
-        try {
-          const binaryString = atob(pdfBase64);
-          const len = binaryString.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-          const blob = new Blob([bytes], { type: 'application/pdf' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          const shortSha = selectedCommit.sha.substring(0, 7);
-          a.download = `GitLayer-${shortSha}.pdf`;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-          }, 200);
-        } catch (e) {
-          alert('Failed to export PDF: ' + e.message);
-        }
-      };
-    }
 
     // Tab Listeners (Changes vs History)
     document.getElementById('sidebar-tab-changes').onclick = () => {
@@ -2325,7 +2283,7 @@
                   <span>${relativeTime}</span>
                 </div>
               </div>
-              <button class="btn-item-import" title="Import this version beside current canvas without removing anything">+ Import</button>
+              <button class="btn-item-import" title="Import this version beside current canvas without removing anything">Import</button>
             </div>
           `;
 
@@ -2386,7 +2344,7 @@
       const btn = document.getElementById('btn-preview-canvas');
       if (btn) {
         btn.disabled = true;
-        btn.innerText = '⏳ Loading...';
+        btn.innerText = 'Loading...';
       }
       const status = document.getElementById('status-text');
       if (status) {
@@ -2463,7 +2421,7 @@
         status.style.color = '#f14c4c';
         if (btn) {
           btn.disabled = false;
-          btn.innerText = '+ Import';
+          btn.innerText = 'Import';
         }
       }
     }
@@ -2751,7 +2709,7 @@
         const btn = document.getElementById('btn-preview-canvas');
         if (btn) {
           btn.disabled = false;
-          btn.innerText = '👁️ View on Canvas';
+          btn.innerText = 'View on Canvas';
         }
         const dismissBtn = document.getElementById('btn-dismiss-canvas');
         if (dismissBtn) dismissBtn.style.display = 'inline-block';
@@ -2776,7 +2734,7 @@
         const btn = document.getElementById('btn-preview-canvas');
         if (btn) {
           btn.disabled = false;
-          btn.innerText = '👁️ View on Canvas';
+          btn.innerText = 'View on Canvas';
         }
         const status = document.getElementById('status-text');
         if (status) {
@@ -2796,14 +2754,14 @@
         if (status) { status.innerText = `✅ Pulled ${msg.count} nodes to canvas!`; status.style.color = '#89d185'; }
         document.getElementById('btn-pull')?.setAttribute('disabled', 'false');
         document.getElementById('btn-pull').disabled = false;
-        document.getElementById('btn-pull').innerText = '↓ Pull';
+        document.getElementById('btn-pull').innerText = 'Pull';
       }
 
       if (msg.type === 'pull-error') {
         const status = document.getElementById('status-text');
         if (status) { status.innerText = '❌ Pull failed: ' + msg.message; status.style.color = '#f14c4c'; }
         const pullBtn = document.getElementById('btn-pull');
-        if (pullBtn) { pullBtn.disabled = false; pullBtn.innerText = '↓ Pull'; }
+        if (pullBtn) { pullBtn.disabled = false; pullBtn.innerText = 'Pull'; }
       }
 
       // Import historical version side-by-side
@@ -2820,7 +2778,7 @@
         }
         document.querySelectorAll('.btn-item-import').forEach(b => {
           b.disabled = false;
-          b.innerText = '+ Import';
+          b.innerText = 'Import';
         });
       }
 
@@ -2832,7 +2790,7 @@
         }
         document.querySelectorAll('.btn-item-import').forEach(b => {
           b.disabled = false;
-          b.innerText = '+ Import';
+          b.innerText = 'Import';
         });
       }
     };
