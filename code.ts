@@ -246,6 +246,19 @@ if (figma.editorType === 'figma') {
       return { pdfBase64: null, dataUrl: null };
     }
 
+    // Clean up any stale temp export frames first
+    try {
+      for (const child of page.children) {
+        if (
+          child.name === '__gitlayer_temp_canvas_export__' ||
+          child.name.startsWith('__gitlayer_temp_') ||
+          child.getPluginData('gitlayer_temp_frame') === 'true'
+        ) {
+          child.remove();
+        }
+      }
+    } catch {}
+
     const exportTargets = page.children.filter(
       c => c.visible !== false &&
            c.type !== 'SLICE' &&
@@ -264,7 +277,9 @@ if (figma.editorType === 'figma') {
     try {
       tempFrame = figma.createFrame();
       tempFrame.name = '__gitlayer_temp_canvas_export__';
+      tempFrame.setPluginData('gitlayer_temp_frame', 'true');
       tempFrame.setPluginData('gitlayer_preview', 'true');
+      tempFrame.visible = false;
       tempFrame.x = -999999;
       tempFrame.y = -999999;
       tempFrame.fills = [];
@@ -935,9 +950,20 @@ if (figma.editorType === 'figma') {
     isRenderingCommitImage = true;
     let tempFrame: FrameNode | null = null;
     try {
+      // Clean up any stale temp render frames first
+      try {
+        for (const child of figma.currentPage.children) {
+          if (child.name === '__gitlayer_temp_render__' || child.name.startsWith('__gitlayer_temp_') || child.getPluginData('gitlayer_temp_frame') === 'true') {
+            child.remove();
+          }
+        }
+      } catch {}
+
       tempFrame = figma.createFrame();
       tempFrame.name = '__gitlayer_temp_render__';
+      tempFrame.setPluginData('gitlayer_temp_frame', 'true');
       tempFrame.setPluginData('gitlayer_preview', 'true');
+      tempFrame.visible = false;
       tempFrame.x = -999999;
       tempFrame.y = -999999;
       tempFrame.fills = [];
@@ -964,16 +990,14 @@ if (figma.editorType === 'figma') {
 
       const pad = 40;
       for (const c of tempFrame.children) {
-        if ('x' in c && 'y' in c) {
-          c.x = c.x - minX + pad;
-          c.y = c.y - minY + pad;
-        }
+        c.x = c.x - minX + pad;
+        c.y = c.y - minY + pad;
       }
       const frameW = Math.max(100, Math.ceil(maxX - minX + pad * 2));
       const frameH = Math.max(100, Math.ceil(maxY - minY + pad * 2));
       tempFrame.resize(frameW, frameH);
 
-      // 1. Vector PDF export (Native C++ Figma vector exporter)
+      // 1. Native Vector PDF export from Figma engine
       let pdfBase64: string | null = null;
       try {
         const pdfBytes = await tempFrame.exportAsync({ format: 'PDF' });
@@ -1016,6 +1040,20 @@ if (figma.editorType === 'figma') {
   // INIT & DOCUMENT CHANGE LISTENER
   // ─────────────────────────────────────────────────────────────────────────────
   async function init() {
+    // Clean up any stale temp export or render frames from previous plugin runs
+    try {
+      for (const child of figma.currentPage.children) {
+        if (
+          child.name === '__gitlayer_temp_canvas_export__' ||
+          child.name === '__gitlayer_temp_render__' ||
+          child.name.startsWith('__gitlayer_temp_') ||
+          child.getPluginData('gitlayer_temp_frame') === 'true'
+        ) {
+          child.remove();
+        }
+      }
+    } catch {}
+
     const pat = await figma.clientStorage.getAsync('github_pat');
     const repo = figma.root.getPluginData('github_repo');
     const branch = figma.root.getPluginData('github_branch') || 'main';
@@ -1102,6 +1140,13 @@ if (figma.editorType === 'figma') {
       }
     } else if (msg.type === 'dismiss-canvas-preview') {
       dismissCanvasPreview();
+      try {
+        for (const child of figma.currentPage.children) {
+          if (child.name.startsWith('__gitlayer_') || child.getPluginData('gitlayer_temp_frame') === 'true') {
+            child.remove();
+          }
+        }
+      } catch {}
     } else if (msg.type === 'render-commit-image' || msg.type === 'render-commit-pdf') {
       try {
         const { dataUrl, pdfBase64 } = await renderCommitToArtifacts(msg.doc);

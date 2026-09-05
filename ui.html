@@ -1152,6 +1152,104 @@
       showScreen('screen-1');
     });
 
+    // Safe UTF-8 Base64 decode for any size payload (avoids callstack and URI malformed errors)
+    function decodeBase64Utf8(base64Str) {
+      if (!base64Str) return '';
+      const clean = base64Str.replace(/\s/g, '');
+      const binaryString = atob(clean);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return new TextDecoder('utf-8').decode(bytes);
+    }
+
+    // Safe UTF-8 Base64 encode in 8KB chunks (avoids callstack overflow on large JSON)
+    function encodeBase64Utf8(str) {
+      const bytes = new TextEncoder().encode(str);
+      let binary = '';
+      const len = bytes.byteLength;
+      const chunkSize = 8192;
+      for (let i = 0; i < len; i += chunkSize) {
+        const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+        binary += String.fromCharCode.apply(null, chunk);
+      }
+      return btoa(binary);
+    }
+
+    // Unified snapshot fetcher supporting files <= 1MB (inline content) and > 1MB (Git Data Blobs API)
+    async function fetchSnapshotDoc(ref) {
+      if (!currentRepo || !currentPat) {
+        throw new Error('Repository or GitHub PAT not configured.');
+      }
+      const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${ref}`;
+      const res = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${currentPat}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 404 || errData.message === 'This repository is empty.') {
+          throw new Error('No design snapshot found on this branch or commit.');
+        }
+        throw new Error(errData.message || 'File not found on GitHub');
+      }
+
+      const data = await res.json();
+
+      // Case 1: File <= 1MB — GitHub provides inline base64 content
+      if (data.content && data.content.trim().length > 0) {
+        try {
+          const jsonStr = decodeBase64Utf8(data.content);
+          return JSON.parse(jsonStr);
+        } catch (parseErr) {
+          console.warn('[GitLayer] Inline content parse failed, falling back to Git Blob API', parseErr);
+        }
+      }
+
+      // Case 2: File > 1MB — GitHub leaves data.content empty and provides data.git_url / data.sha
+      const blobUrl = data.git_url || (data.sha ? `https://api.github.com/repos/${currentRepo}/git/blobs/${data.sha}` : null);
+      if (blobUrl) {
+        // Try raw blob first (fastest, unencoded)
+        try {
+          const rawBlobRes = await fetch(blobUrl, {
+            headers: {
+              'Authorization': `Bearer ${currentPat}`,
+              'Accept': 'application/vnd.github.raw'
+            }
+          });
+          if (rawBlobRes.ok) {
+            const rawText = await rawBlobRes.text();
+            if (rawText && rawText.trim().startsWith('{')) {
+              return JSON.parse(rawText);
+            }
+          }
+        } catch (rawErr) {
+          console.warn('[GitLayer] Raw blob fetch fallback', rawErr);
+        }
+
+        // Fallback: Fetch base64 blob from Git Blobs API (supports files up to 100MB)
+        const blobRes = await fetch(blobUrl, {
+          headers: {
+            'Authorization': `Bearer ${currentPat}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        if (blobRes.ok) {
+          const blobData = await blobRes.json();
+          if (blobData && blobData.content) {
+            const jsonStr = decodeBase64Utf8(blobData.content);
+            return JSON.parse(jsonStr);
+          }
+        }
+      }
+
+      throw new Error('Design snapshot in this commit was empty or could not be loaded.');
+    }
+
     // Pull button — fetch snapshot from GitHub and send to code.ts for reconstruction
     document.getElementById('btn-pull').addEventListener('click', async () => {
       const btn = document.getElementById('btn-pull');
@@ -1165,24 +1263,9 @@
       status.style.color = '#aaa';
 
       try {
-        // 1. Fetch figma-snapshot.json from GitHub
-        const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${currentBranch}`;
-        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' } });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          if (res.status === 404 || errData.message === 'This repository is empty.') {
-            throw new Error('No design snapshot found on this branch yet. Please commit your canvas first.');
-          }
-          throw new Error(errData.message || 'File not found on GitHub');
-        }
-        const data = await res.json();
-
-        // 2. Decode the base64 content
-        const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
-        const doc = JSON.parse(jsonStr);
-
+        const doc = await fetchSnapshotDoc(currentBranch);
         status.innerText = 'Reconstructing design on canvas...';
-        // 3. Send to code.ts deserializer
+        // Send to code.ts deserializer
         parent.postMessage({ pluginMessage: { type: 'pull-from-github', doc } }, '*');
 
       } catch (e) {
@@ -2354,21 +2437,22 @@
       updateRightPanelView();
 
       try {
-        const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${commit.sha}`;
-        const res = await fetch(url, {
-          headers: { 'Authorization': `Bearer ${currentPat}`, 'Accept': 'application/vnd.github.v3+json' }
-        });
-        if (!res.ok) {
-          selectedCommitDoc = null;
-          updateRightPanelView();
-          return;
-        }
-        const data = await res.json();
-        const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
-        selectedCommitDoc = JSON.parse(jsonStr);
+        selectedCommitDoc = await fetchSnapshotDoc(commit.sha);
         updateRightPanelView();
       } catch (e) {
         console.error("Failed to load commit snapshot", e);
+        selectedCommitDoc = null;
+        updateRightPanelView();
+        const empty = document.getElementById('diff-empty-state');
+        if (empty) {
+          empty.style.display = 'block';
+          empty.innerHTML = `
+            <div style="color: #f85149; font-size: 12px; line-height: 1.5; padding: 16px; text-align: center;">
+              <div style="font-weight: 600; margin-bottom: 4px;">Failed to load commit snapshot</div>
+              <div style="color: #8b949e; font-size: 11px;">${escapeHtml(e.message)}</div>
+            </div>
+          `;
+        }
       }
     }
 
@@ -2419,23 +2503,7 @@
       status.style.color = '#aaa';
 
       try {
-        const url = `https://api.github.com/repos/${currentRepo}/contents/figma-snapshot.json?ref=${commit.sha}`;
-        const res = await fetch(url, {
-          headers: {
-            'Authorization': `Bearer ${currentPat}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.message === 'Not Found' ? 'No design snapshot in this commit.' : (err.message || 'Failed to fetch commit snapshot'));
-        }
-
-        const data = await res.json();
-        const jsonStr = decodeURIComponent(escape(atob(data.content.replace(/\n/g, ''))));
-        const doc = JSON.parse(jsonStr);
-
+        const doc = await fetchSnapshotDoc(commit.sha);
         status.innerText = 'Placing historical version beside current design...';
 
         parent.postMessage({
@@ -2650,7 +2718,7 @@
         try {
           const { pat, repo, branch, payload, nativeSvg, message } = msg;
 
-          const contentBase64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload, null, 2))));
+          const contentBase64 = encodeBase64Utf8(JSON.stringify(payload));
           const url = `https://api.github.com/repos/${repo}/contents/figma-snapshot.json`;
           let sha = null;
 
@@ -2676,7 +2744,7 @@
           // If native SVG export is available, also commit preview.svg so it renders in GitHub Web UI
           if (nativeSvg) {
             try {
-              const svgBase64 = btoa(unescape(encodeURIComponent(nativeSvg)));
+              const svgBase64 = encodeBase64Utf8(nativeSvg);
               const svgUrl = `https://api.github.com/repos/${repo}/contents/preview.svg`;
               let svgSha = null;
               try {
