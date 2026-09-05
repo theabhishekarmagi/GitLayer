@@ -311,6 +311,10 @@ if (figma.editorType === 'figma') {
         }
     }
     async function deserializeDocument(doc) {
+        if (doc.pageName && doc.nodes) {
+            figma.ui.postMessage({ type: 'pull-error', message: 'Legacy snapshot format detected. Please commit this design again using the updated plugin first.' });
+            return;
+        }
         const pages = doc?.document?.children ?? [];
         if (pages.length === 0) {
             figma.ui.postMessage({ type: 'pull-error', message: 'No pages found in snapshot.' });
