@@ -236,8 +236,8 @@ if (figma.editorType === 'figma') {
     const children = page.children;
     if (!children || children.length === 0) return null;
 
-    // Filter to visible top-level nodes (up to 50 nodes)
-    const exportTargets = children.filter(c => c.visible !== false).slice(0, 50);
+    // Filter to visible top-level nodes (up to 50 nodes, excluding SLICE export tools)
+    const exportTargets = children.filter(c => c.visible !== false && c.type !== 'SLICE').slice(0, 50);
     if (exportTargets.length === 0) return null;
 
     try {
