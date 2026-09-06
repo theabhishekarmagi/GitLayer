@@ -8,7 +8,7 @@ if (figma.editorType === 'figma') {
   // SERIALIZER — Captures full node hierarchy & styling directly from Figma canvas
   // ─────────────────────────────────────────────────────────────────────────────
 
-  function serializeNode(node: SceneNode): any {
+  async function serializeNode(node: SceneNode): Promise<any> {
     const data: any = {
       id: node.id,
       name: node.name,
@@ -29,26 +29,40 @@ if (figma.editorType === 'figma') {
 
     // Fills
     if ('fills' in node && Array.isArray(node.fills)) {
-      data.fills = (node.fills as ReadonlyArray<Paint>).map((fill) => {
+      const serializedFills: any[] = [];
+      for (const fill of (node.fills as ReadonlyArray<Paint>)) {
         if (fill.type === 'SOLID' && fill.color) {
-          return {
+          serializedFills.push({
             type: 'SOLID',
             color: { r: fill.color.r, g: fill.color.g, b: fill.color.b },
             opacity: fill.opacity ?? 1,
             visible: fill.visible ?? true,
             blendMode: fill.blendMode ?? 'NORMAL'
-          };
+          });
         } else if (fill.type === 'IMAGE' && (fill as ImagePaint).imageHash) {
-          return {
+          let imageBase64: string | undefined = undefined;
+          try {
+            const img = figma.getImageByHash((fill as ImagePaint).imageHash!);
+            if (img) {
+              const bytes = await img.getBytesAsync();
+              if (bytes && bytes.length > 0) {
+                imageBase64 = figma.base64Encode(bytes);
+              }
+            }
+          } catch (imgErr) {
+            console.warn('[GitLayer] Could not extract image bytes', imgErr);
+          }
+          serializedFills.push({
             type: 'IMAGE',
             imageHash: (fill as ImagePaint).imageHash,
+            imageBase64: imageBase64,
             scaleMode: (fill as ImagePaint).scaleMode,
             opacity: fill.opacity ?? 1,
             visible: fill.visible ?? true
-          };
+          });
         } else if (fill.type.startsWith('GRADIENT')) {
           const gf = fill as GradientPaint;
-          return {
+          serializedFills.push({
             type: gf.type,
             gradientTransform: gf.gradientTransform,
             gradientStops: (gf.gradientStops || []).map(s => ({
@@ -57,10 +71,12 @@ if (figma.editorType === 'figma') {
             })),
             opacity: gf.opacity ?? 1,
             visible: gf.visible ?? true
-          };
+          });
+        } else {
+          serializedFills.push({ type: fill.type });
         }
-        return { type: fill.type };
-      });
+      }
+      data.fills = serializedFills;
     }
 
     // Strokes
@@ -129,7 +145,7 @@ if (figma.editorType === 'figma') {
       };
     }
 
-    // Auto layout
+    // Auto layout container properties
     if ('layoutMode' in node) {
       const fn = node as FrameNode;
       data.layoutMode = fn.layoutMode;
@@ -143,6 +159,28 @@ if (figma.editorType === 'figma') {
       data.paddingRight = fn.paddingRight;
       data.itemSpacing = fn.itemSpacing;
       data.clipsContent = fn.clipsContent;
+      if ('layoutWrap' in fn) data.layoutWrap = fn.layoutWrap;
+      if ('counterAxisSpacing' in fn) data.counterAxisSpacing = fn.counterAxisSpacing;
+      if ('counterAxisAlignContent' in fn) data.counterAxisAlignContent = fn.counterAxisAlignContent;
+      if ('strokesIncludedInLayout' in fn) data.strokesIncludedInLayout = fn.strokesIncludedInLayout;
+      if ('itemReverseZIndex' in fn) data.itemReverseZIndex = fn.itemReverseZIndex;
+    }
+
+    // Auto layout child properties
+    if ('layoutPositioning' in node) {
+      data.layoutPositioning = (node as any).layoutPositioning;
+    }
+    if ('layoutAlign' in node) {
+      data.layoutAlign = (node as any).layoutAlign;
+    }
+    if ('layoutGrow' in node) {
+      data.layoutGrow = (node as any).layoutGrow;
+    }
+    if ('layoutSizingHorizontal' in node) {
+      data.layoutSizingHorizontal = (node as any).layoutSizingHorizontal;
+    }
+    if ('layoutSizingVertical' in node) {
+      data.layoutSizingVertical = (node as any).layoutSizingVertical;
     }
 
     // Text properties
@@ -158,6 +196,15 @@ if (figma.editorType === 'figma') {
           const style = (tn.fontName.style || '').toLowerCase();
           isBold = style.includes('bold');
           isItalic = style.includes('italic');
+          data.fontName = {
+            family: tn.fontName.family,
+            style: tn.fontName.style
+          };
+        }
+      } catch {}
+      try {
+        if ('textAutoResize' in tn) {
+          data.textAutoResize = tn.textAutoResize;
         }
       } catch {}
       const fontSize = tn.fontSize !== figma.mixed && typeof tn.fontSize === 'number' ? tn.fontSize : 14;
@@ -207,13 +254,17 @@ if (figma.editorType === 'figma') {
 
     // Children recursion
     if ('children' in node) {
-      data.children = (node.children as SceneNode[]).map(child => serializeNode(child));
+      const kids: any[] = [];
+      for (const child of (node.children as SceneNode[])) {
+        kids.push(await serializeNode(child));
+      }
+      data.children = kids;
     }
 
     return data;
   }
 
-  function serializeCurrentPage() {
+  async function serializeCurrentPage() {
     const page = figma.currentPage;
     const realChildren = page.children.filter(
       c => c.visible !== false &&
@@ -223,6 +274,10 @@ if (figma.editorType === 'figma') {
            !c.name.startsWith('[Imported]') &&
            !c.name.startsWith('__gitlayer_')
     );
+    const serializedChildren: any[] = [];
+    for (const child of realChildren) {
+      serializedChildren.push(await serializeNode(child));
+    }
     return {
       document: {
         children: [
@@ -230,7 +285,7 @@ if (figma.editorType === 'figma') {
             id: page.id,
             name: page.name,
             type: 'CANVAS',
-            children: realChildren.map(child => serializeNode(child))
+            children: serializedChildren
           }
         ]
       },
@@ -240,6 +295,7 @@ if (figma.editorType === 'figma') {
   }
 
   let isExportingCanvasPreview = false;
+  let isImportingOrPulling = false;
   let suppressDocumentChangeUntil = 0;
   const gitlayerInternalNodeIds = new Set<string>();
 
@@ -468,7 +524,7 @@ if (figma.editorType === 'figma') {
     if (isSendingPreview) return;
     isSendingPreview = true;
     try {
-      const payload = serializeCurrentPage();
+      const payload = await serializeCurrentPage();
       const { pdfBase64, dataUrl } = await exportActiveCanvasArtifacts();
       const thumbnails = pdfBase64 ? null : await generateVisualPreview();
       figma.ui.postMessage({
@@ -495,7 +551,8 @@ if (figma.editorType === 'figma') {
     const x = data.x ?? data.absoluteBoundingBox?.x ?? 0;
     const y = data.y ?? data.absoluteBoundingBox?.y ?? 0;
 
-    if ('resize' in node && typeof w === 'number' && typeof h === 'number') {
+    // Do NOT resize TEXT nodes here (they must be sized after characters/fonts are loaded)
+    if (node.type !== 'TEXT' && 'resize' in node && typeof w === 'number' && typeof h === 'number') {
       try {
         (node as FrameNode).resize(Math.max(1, w), Math.max(1, h));
       } catch (e) {}
@@ -536,25 +593,76 @@ if (figma.editorType === 'figma') {
               opacity: fill.opacity ?? 1,
               blendMode: fill.blendMode ?? 'NORMAL'
             } as GradientPaint);
-          } else if (fill.type === 'IMAGE' && fill.imageHash) {
+          } else if (fill.type === 'IMAGE') {
             try {
-              const img = figma.getImageByHash(fill.imageHash);
-              if (img) {
-                paints.push({
+              let imageObj: Image | null = null;
+              if (fill.imageBase64) {
+                try {
+                  const bytes = figma.base64Decode(fill.imageBase64);
+                  imageObj = figma.createImage(bytes);
+                } catch (decodeErr) {
+                  console.warn('[GitLayer] Failed to create image from base64', decodeErr);
+                }
+              }
+              if (!imageObj && fill.imageHash) {
+                try {
+                  imageObj = figma.getImageByHash(fill.imageHash);
+                } catch {}
+              }
+
+              if (imageObj) {
+                const imgPaint: any = {
                   type: 'IMAGE',
-                  imageHash: fill.imageHash,
+                  imageHash: imageObj.hash,
                   scaleMode: fill.scaleMode ?? 'FILL',
                   visible: fill.visible ?? true,
                   opacity: fill.opacity ?? 1
-                } as ImagePaint);
+                };
+                if (fill.imageTransform) imgPaint.imageTransform = fill.imageTransform;
+                if (fill.scalingFactor !== undefined) imgPaint.scalingFactor = fill.scalingFactor;
+                if (fill.rotation !== undefined) imgPaint.rotation = fill.rotation;
+                if (fill.filters) imgPaint.filters = fill.filters;
+                paints.push(imgPaint as ImagePaint);
+              } else {
+                // If neither base64 nor hash resolved, provide a subtle placeholder
+                paints.push({
+                  type: 'SOLID',
+                  color: { r: 0.16, g: 0.17, b: 0.20 },
+                  opacity: 1,
+                  visible: true,
+                  blendMode: 'NORMAL'
+                } as SolidPaint);
               }
-            } catch (e) {}
+            } catch (e) {
+              paints.push({
+                type: 'SOLID',
+                color: { r: 0.16, g: 0.17, b: 0.20 },
+                opacity: 1,
+                visible: true,
+                blendMode: 'NORMAL'
+              } as SolidPaint);
+            }
           }
         }
-        (node as any).fills = paints;
+        if (paints.length > 0) {
+          (node as any).fills = paints;
+        } else {
+          (node as any).fills = [];
+        }
       } else {
         // Clear default white/grey Figma fills on transparent frames and shapes
-        (node as any).fills = [];
+        // Only provide a fallback fill for vectors IF they have no strokes and no fills defined
+        if (node.type === 'VECTOR' && (!data.strokes || data.strokes.length === 0) && (!data.fills || data.fills.length === 0)) {
+          (node as any).fills = [{
+            type: 'SOLID',
+            color: { r: 0.85, g: 0.85, b: 0.85 },
+            opacity: 1,
+            visible: true,
+            blendMode: 'NORMAL'
+          } as SolidPaint];
+        } else {
+          (node as any).fills = [];
+        }
       }
     }
 
@@ -621,41 +729,144 @@ if (figma.editorType === 'figma') {
 
   function applyAutoLayout(frame: FrameNode, data: any) {
     if (!data.layoutMode || data.layoutMode === 'NONE') return;
-    frame.layoutMode = data.layoutMode;
-    frame.primaryAxisSizingMode = data.primaryAxisSizingMode ?? 'AUTO';
-    frame.counterAxisSizingMode = data.counterAxisSizingMode ?? 'AUTO';
-    frame.primaryAxisAlignItems = data.primaryAxisAlignItems ?? 'MIN';
-    frame.counterAxisAlignItems = data.counterAxisAlignItems ?? 'MIN';
-    frame.paddingTop = data.paddingTop ?? 0;
-    frame.paddingBottom = data.paddingBottom ?? 0;
-    frame.paddingLeft = data.paddingLeft ?? 0;
-    frame.paddingRight = data.paddingRight ?? 0;
-    frame.itemSpacing = data.itemSpacing ?? 0;
+    try {
+      frame.layoutMode = data.layoutMode;
+      if (data.primaryAxisAlignItems) {
+        frame.primaryAxisAlignItems = data.primaryAxisAlignItems;
+      }
+      if (data.counterAxisAlignItems) {
+        frame.counterAxisAlignItems = data.counterAxisAlignItems;
+      }
+      if (typeof data.paddingTop === 'number') frame.paddingTop = data.paddingTop;
+      if (typeof data.paddingBottom === 'number') frame.paddingBottom = data.paddingBottom;
+      if (typeof data.paddingLeft === 'number') frame.paddingLeft = data.paddingLeft;
+      if (typeof data.paddingRight === 'number') frame.paddingRight = data.paddingRight;
+      if (typeof data.itemSpacing === 'number') frame.itemSpacing = data.itemSpacing;
+      if (data.layoutWrap && 'layoutWrap' in frame) {
+        frame.layoutWrap = data.layoutWrap;
+      }
+      if (typeof data.counterAxisSpacing === 'number' && 'counterAxisSpacing' in frame) {
+        frame.counterAxisSpacing = data.counterAxisSpacing;
+      }
+      if (data.counterAxisAlignContent && 'counterAxisAlignContent' in frame) {
+        frame.counterAxisAlignContent = data.counterAxisAlignContent;
+      }
+      if (typeof data.strokesIncludedInLayout === 'boolean' && 'strokesIncludedInLayout' in frame) {
+        frame.strokesIncludedInLayout = data.strokesIncludedInLayout;
+      }
+      if (typeof data.itemReverseZIndex === 'boolean' && 'itemReverseZIndex' in frame) {
+        frame.itemReverseZIndex = data.itemReverseZIndex;
+      }
+      if (data.primaryAxisSizingMode) {
+        frame.primaryAxisSizingMode = data.primaryAxisSizingMode;
+      }
+      if (data.counterAxisSizingMode) {
+        frame.counterAxisSizingMode = data.counterAxisSizingMode;
+      }
+    } catch (e) {
+      console.warn('[GitLayer] Error applying auto layout', e);
+    }
+  }
+
+  function applyChildLayoutProps(child: SceneNode, data: any) {
+    try {
+      if (data.layoutPositioning && 'layoutPositioning' in child) {
+        (child as any).layoutPositioning = data.layoutPositioning;
+        if (data.layoutPositioning === 'ABSOLUTE') {
+          if (typeof data.x === 'number') (child as any).x = data.x;
+          if (typeof data.y === 'number') (child as any).y = data.y;
+        }
+      }
+    } catch {}
+
+    try {
+      if (data.layoutAlign && 'layoutAlign' in child) {
+        (child as any).layoutAlign = data.layoutAlign;
+      }
+    } catch {}
+
+    try {
+      if (data.layoutGrow !== undefined && 'layoutGrow' in child) {
+        (child as any).layoutGrow = data.layoutGrow;
+      }
+    } catch {}
+
+    try {
+      if (data.layoutSizingHorizontal && 'layoutSizingHorizontal' in child) {
+        (child as any).layoutSizingHorizontal = data.layoutSizingHorizontal;
+      }
+    } catch {}
+
+    try {
+      if (data.layoutSizingVertical && 'layoutSizingVertical' in child) {
+        (child as any).layoutSizingVertical = data.layoutSizingVertical;
+      }
+    } catch {}
   }
 
   async function applyTextProps(textNode: TextNode, data: any) {
-    const family = data.style?.fontFamily ?? 'Inter';
-    const weight = data.style?.fontWeight ?? 400;
-    const italic = data.style?.italic ?? false;
-    let style = 'Regular';
-    if (weight >= 700 && italic) style = 'Bold Italic';
-    else if (weight >= 700) style = 'Bold';
-    else if (italic) style = 'Italic';
+    let fontLoaded = false;
 
-    try {
-      await figma.loadFontAsync({ family, style });
-    } catch {
-      await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
-      style = 'Regular';
+    // 1. Try explicit fontName if present
+    if (data.fontName && data.fontName.family && data.fontName.style) {
+      try {
+        await figma.loadFontAsync({ family: data.fontName.family, style: data.fontName.style });
+        textNode.fontName = { family: data.fontName.family, style: data.fontName.style };
+        fontLoaded = true;
+      } catch {}
     }
 
-    try {
-      textNode.fontName = { family, style };
-    } catch {
-      textNode.fontName = { family: 'Inter', style: 'Regular' };
-    }
-    textNode.characters = data.characters ?? '';
+    // 2. Try candidate styles for fontFamily
+    if (!fontLoaded && data.style?.fontFamily) {
+      const family = data.style.fontFamily;
+      const weight = data.style.fontWeight ?? 400;
+      const italic = data.style.italic ?? false;
 
+      const candidateStyles: string[] = [];
+      if (weight >= 700 && italic) candidateStyles.push('Bold Italic', 'Bold', 'Italic', 'Regular');
+      else if (weight >= 700) candidateStyles.push('Bold', 'SemiBold', 'Regular');
+      else if (weight === 500 || weight === 600) candidateStyles.push('Medium', 'SemiBold', 'Regular');
+      else if (italic) candidateStyles.push('Italic', 'Regular');
+      else candidateStyles.push('Regular');
+
+      for (const s of candidateStyles) {
+        try {
+          await figma.loadFontAsync({ family, style: s });
+          textNode.fontName = { family, style: s };
+          fontLoaded = true;
+          break;
+        } catch {}
+      }
+    }
+
+    // 3. Fallback fonts
+    if (!fontLoaded) {
+      for (const fallback of [
+        { family: 'Inter', style: 'Regular' },
+        { family: 'Roboto', style: 'Regular' },
+        { family: 'Arial', style: 'Regular' }
+      ]) {
+        try {
+          await figma.loadFontAsync(fallback);
+          textNode.fontName = fallback;
+          fontLoaded = true;
+          break;
+        } catch {}
+      }
+    }
+
+    // 4. Safely set text characters
+    try {
+      textNode.characters = data.characters ?? '';
+    } catch (e) {
+      try {
+        await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
+        textNode.fontName = { family: 'Inter', style: 'Regular' };
+        textNode.characters = data.characters ?? '';
+      } catch {}
+    }
+
+    // 5. Typography styling
     if (data.style) {
       const s = data.style;
       try { textNode.fontSize = s.fontSize ?? 14; } catch {}
@@ -665,6 +876,8 @@ if (figma.editorType === 'figma') {
       if (s.lineHeightPx !== undefined) try { textNode.lineHeight = { value: s.lineHeightPx, unit: 'PIXELS' }; } catch {}
       else try { textNode.lineHeight = { unit: 'AUTO' }; } catch {}
     }
+
+    // 6. Text fills
     if (Array.isArray(data.fills) && data.fills.length > 0) {
       const f = data.fills[0];
       if (f.type === 'SOLID' && f.color) {
@@ -676,7 +889,31 @@ if (figma.editorType === 'figma') {
           blendMode: 'NORMAL'
         } as SolidPaint];
       }
+    } else {
+      textNode.fills = [{
+        type: 'SOLID',
+        color: { r: 0.9, g: 0.9, b: 0.9 },
+        opacity: 1,
+        visible: true,
+        blendMode: 'NORMAL'
+      } as SolidPaint];
     }
+
+    // 7. Sizing & auto-resize
+    const w = data.width ?? data.absoluteBoundingBox?.width;
+    const h = data.height ?? data.absoluteBoundingBox?.height;
+    try {
+      if (data.textAutoResize) {
+        textNode.textAutoResize = data.textAutoResize;
+        if (data.textAutoResize === 'NONE' && typeof w === 'number' && typeof h === 'number') {
+          textNode.resize(Math.max(1, w), Math.max(1, h));
+        } else if (data.textAutoResize === 'HEIGHT' && typeof w === 'number') {
+          textNode.resize(Math.max(1, w), Math.max(1, textNode.height));
+        }
+      } else {
+        textNode.textAutoResize = 'WIDTH_AND_HEIGHT';
+      }
+    } catch {}
   }
 
   async function buildNode(data: any, parent: BaseNode & ChildrenMixin): Promise<SceneNode | null> {
@@ -690,8 +927,19 @@ if (figma.editorType === 'figma') {
           parent.appendChild(frame);
           applyCommonProps(frame, data);
           if (Array.isArray(data.layoutGrids)) try { frame.layoutGrids = data.layoutGrids; } catch {}
+
+          // Set layout mode first so children can attach into auto-layout flow
+          if (data.layoutMode && data.layoutMode !== 'NONE') {
+            try { frame.layoutMode = data.layoutMode; } catch {}
+          }
+
           if (data.children) {
-            for (const c of data.children) await buildNode(c, frame);
+            for (const c of data.children) {
+              const childNode = await buildNode(c, frame);
+              if (childNode) {
+                applyChildLayoutProps(childNode, c);
+              }
+            }
           }
           applyAutoLayout(frame, data);
           return frame;
@@ -713,9 +961,8 @@ if (figma.editorType === 'figma') {
         case 'TEXT': {
           const text = figma.createText();
           parent.appendChild(text);
-          await figma.loadFontAsync({ family: 'Inter', style: 'Regular' });
-          applyCommonProps(text, data);
           await applyTextProps(text, data);
+          applyCommonProps(text, data);
           return text;
         }
         case 'RECTANGLE': {
@@ -805,7 +1052,13 @@ if (figma.editorType === 'figma') {
             applyCommonProps(flat, data);
             return flat;
           } catch {
-            return null;
+            try {
+              const group = figma.group(kids, parent as any);
+              applyCommonProps(group, data);
+              return group;
+            } catch {
+              return kids[0] || null;
+            }
           }
         }
         default:
@@ -832,26 +1085,33 @@ if (figma.editorType === 'figma') {
       figma.ui.postMessage({ type: 'pull-error', message: 'No pages found in snapshot.' });
       return;
     }
-    const currentPage = figma.currentPage;
-    currentPage.name = pages[0].name ?? currentPage.name;
 
-    // Remove existing nodes on canvas
-    for (const child of [...currentPage.children]) child.remove();
+    isImportingOrPulling = true;
+    try {
+      const currentPage = figma.currentPage;
+      currentPage.name = pages[0].name ?? currentPage.name;
 
-    const topNodes = pages[0].children ?? [];
-    let restored = 0;
-    for (const nodeData of topNodes) {
-      await buildNode(nodeData, currentPage);
-      restored++;
-      figma.ui.postMessage({
-        type: 'pull-progress',
-        message: `Restored ${restored}/${topNodes.length} nodes...`
-      });
+      // Remove existing nodes on canvas
+      for (const child of [...currentPage.children]) child.remove();
+
+      const topNodes = pages[0].children ?? [];
+      let restored = 0;
+      for (const nodeData of topNodes) {
+        await buildNode(nodeData, currentPage);
+        restored++;
+        figma.ui.postMessage({
+          type: 'pull-progress',
+          message: `Restored ${restored}/${topNodes.length} nodes...`
+        });
+      }
+      if (currentPage.children.length > 0) {
+        figma.viewport.scrollAndZoomIntoView(currentPage.children as SceneNode[]);
+      }
+      figma.ui.postMessage({ type: 'pull-success', count: restored });
+    } finally {
+      isImportingOrPulling = false;
+      suppressDocumentChangeUntil = Date.now() + 2500;
     }
-    if (currentPage.children.length > 0) {
-      figma.viewport.scrollAndZoomIntoView(currentPage.children as SceneNode[]);
-    }
-    figma.ui.postMessage({ type: 'pull-success', count: restored });
   }
 
   async function importCommitBesideCurrent(doc: any, commitInfo: { sha: string, message: string }) {
@@ -869,92 +1129,118 @@ if (figma.editorType === 'figma') {
       return;
     }
 
-    const currentPage = figma.currentPage;
+    isImportingOrPulling = true;
+    try {
+      const currentPage = figma.currentPage;
 
-    // Clean up any existing preview frame from canvas first
-    const existingPreviews = currentPage.children.filter(c => c.getPluginData('gitlayer_preview') === 'true');
-    for (const p of existingPreviews) {
-      try { p.remove(); } catch {}
-    }
-
-    // Calculate bounding box of existing canvas children so we don't overlap!
-    let maxX = 0;
-    let minY = 0;
-    let hasExisting = false;
-    for (const child of currentPage.children) {
-      if ('x' in child && 'width' in child && 'y' in child) {
-        hasExisting = true;
-        maxX = Math.max(maxX, child.x + child.width);
-        minY = Math.min(minY, child.y);
+      // Clean up any existing preview frame from canvas first
+      const existingPreviews = currentPage.children.filter(c => c.getPluginData('gitlayer_preview') === 'true');
+      for (const p of existingPreviews) {
+        try { p.remove(); } catch {}
       }
-    }
 
-    const offsetX = hasExisting ? maxX + 160 : 0;
-    const offsetY = hasExisting ? minY : 0;
+      // Calculate bounding box of existing canvas children so we don't overlap!
+      let maxX = 0;
+      let minY = 0;
+      let hasExisting = false;
+      for (const child of currentPage.children) {
+        if ('x' in child && 'width' in child && 'y' in child) {
+          hasExisting = true;
+          maxX = Math.max(maxX, child.x + child.width);
+          minY = Math.min(minY, child.y);
+        }
+      }
 
-    const shortSha = commitInfo.sha.substring(0, 7);
-    const title = commitInfo.message.split('\n')[0] || 'Historical Commit';
+      const offsetX = hasExisting ? maxX + 160 : 0;
+      const offsetY = hasExisting ? minY : 0;
 
-    // Create a container Frame for this historical version
-    const container = figma.createFrame();
-    container.name = `[GitLayer Preview] ${title} (${shortSha})`;
-    container.setPluginData('gitlayer_preview', 'true');
-    container.x = offsetX;
-    container.y = offsetY;
-    container.fills = []; // Transparent background
-    container.clipsContent = false;
-    container.strokes = [{
-      type: 'SOLID',
-      color: { r: 0.18, g: 0.5, b: 0.97 }, // #2f81f7 GitHub blue
-      opacity: 0.9
-    }];
-    container.strokeWeight = 2;
-    container.dashPattern = [8, 4];
-    container.cornerRadius = 8;
-    currentPage.appendChild(container);
+      const shortSha = commitInfo.sha.substring(0, 7);
+      const title = commitInfo.message.split('\n')[0] || 'Historical Commit';
 
-    const topNodes = pages[0].children ?? [];
-    let restored = 0;
-    for (const nodeData of topNodes) {
-      await buildNode(nodeData, container);
-      restored++;
+      // Create a container Frame for this historical version
+      const container = figma.createFrame();
+      container.name = `[GitLayer Preview] ${title} (${shortSha})`;
+      container.setPluginData('gitlayer_preview', 'true');
+      gitlayerInternalNodeIds.add(container.id);
+      container.x = offsetX;
+      container.y = offsetY;
+      container.fills = []; // Transparent background
+      container.clipsContent = false;
+      container.strokes = [{
+        type: 'SOLID',
+        color: { r: 0.18, g: 0.5, b: 0.97 }, // #2f81f7 GitHub blue
+        opacity: 0.9
+      }];
+      container.strokeWeight = 2;
+      container.dashPattern = [8, 4];
+      container.cornerRadius = 8;
+      currentPage.appendChild(container);
+
+      const topNodes = pages[0].children ?? [];
+      let restored = 0;
+
+      // Calculate minimum x and y among top-level nodes to normalize them inside container
+      let minTopX = Infinity;
+      let minTopY = Infinity;
+      for (const n of topNodes) {
+        if (typeof n.x === 'number') minTopX = Math.min(minTopX, n.x);
+        if (typeof n.y === 'number') minTopY = Math.min(minTopY, n.y);
+      }
+      if (!isFinite(minTopX)) minTopX = 0;
+      if (!isFinite(minTopY)) minTopY = 0;
+
+      for (const nodeData of topNodes) {
+        const built = await buildNode(nodeData, container);
+        if (built) {
+          if (typeof nodeData.x === 'number') {
+            built.x = (nodeData.x - minTopX) + 40;
+          }
+          if (typeof nodeData.y === 'number') {
+            built.y = (nodeData.y - minTopY) + 40;
+          }
+          restored++;
+        }
+        figma.ui.postMessage({
+          type: 'import-progress',
+          message: `Importing ${restored}/${topNodes.length} nodes...`
+        });
+        figma.ui.postMessage({
+          type: 'preview-canvas-progress',
+          message: `Building on canvas ${restored}/${topNodes.length}...`
+        });
+      }
+
+      // Auto-fit container around its imported children
+      let innerMaxX = 100;
+      let innerMaxY = 100;
+      for (const c of container.children) {
+        if ('x' in c && 'width' in c && 'y' in c && 'height' in c) {
+          innerMaxX = Math.max(innerMaxX, c.x + c.width);
+          innerMaxY = Math.max(innerMaxY, c.y + c.height);
+        }
+      }
+      container.resize(Math.max(200, innerMaxX + 40), Math.max(200, innerMaxY + 40));
+
+      // Focus & select the imported version
+      currentPage.selection = [container];
+      figma.viewport.scrollAndZoomIntoView([container]);
+
       figma.ui.postMessage({
-        type: 'import-progress',
-        message: `Importing ${restored}/${topNodes.length} nodes...`
+        type: 'import-success',
+        sha: shortSha,
+        title: title,
+        count: restored
       });
       figma.ui.postMessage({
-        type: 'preview-canvas-progress',
-        message: `Building on canvas ${restored}/${topNodes.length}...`
+        type: 'preview-canvas-success',
+        sha: shortSha,
+        title: title,
+        count: restored
       });
+    } finally {
+      isImportingOrPulling = false;
+      suppressDocumentChangeUntil = Date.now() + 2500;
     }
-
-    // Auto-fit container around its imported children
-    let innerMaxX = 100;
-    let innerMaxY = 100;
-    for (const c of container.children) {
-      if ('x' in c && 'width' in c && 'y' in c && 'height' in c) {
-        innerMaxX = Math.max(innerMaxX, c.x + c.width);
-        innerMaxY = Math.max(innerMaxY, c.y + c.height);
-      }
-    }
-    container.resize(Math.max(200, innerMaxX + 40), Math.max(200, innerMaxY + 40));
-
-    // Focus & select the imported version
-    currentPage.selection = [container];
-    figma.viewport.scrollAndZoomIntoView([container]);
-
-    figma.ui.postMessage({
-      type: 'import-success',
-      sha: shortSha,
-      title: title,
-      count: restored
-    });
-    figma.ui.postMessage({
-      type: 'preview-canvas-success',
-      sha: shortSha,
-      title: title,
-      count: restored
-    });
   }
 
   function dismissCanvasPreview() {
@@ -1117,8 +1403,9 @@ if (figma.editorType === 'figma') {
     try {
       await figma.loadAllPagesAsync();
       let previewTimeout: ReturnType<typeof setTimeout> | null = null;
-      figma.on('documentchange', (event: DocumentChangeEvent) => {
+      figma.on('documentchange', async (event: DocumentChangeEvent) => {
         if (
+          isImportingOrPulling ||
           isRenderingCommitImage ||
           isExportingCanvasPreview ||
           isSendingPreview ||
@@ -1134,7 +1421,12 @@ if (figma.editorType === 'figma') {
             if (gitlayerInternalNodeIds.has(change.id)) {
               continue;
             }
-            const node = figma.getNodeById(change.id);
+            let node: BaseNode | null = null;
+            try {
+              node = await figma.getNodeByIdAsync(change.id);
+            } catch {
+              continue;
+            }
             if (node) {
               if (
                 node.name.startsWith('__gitlayer_') ||
@@ -1199,7 +1491,7 @@ if (figma.editorType === 'figma') {
     } else if (msg.type === 'request-preview') {
       sendPreview();
     } else if (msg.type === 'serialize-and-commit') {
-      const payload = serializeCurrentPage();
+      const payload = await serializeCurrentPage();
       const { pdfBase64, dataUrl } = await exportActiveCanvasArtifacts();
       if (pdfBase64) {
         (payload as any).previewPdf = pdfBase64;
