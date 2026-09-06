@@ -1,4 +1,8 @@
-# GitLayer
+<div align="center">
+  <img src="assets/icon-128.png" width="96" height="96" alt="GitLayer Logo" />
+  <h1>GitLayer</h1>
+  <p><strong>Git-style version control directly inside Figma</strong></p>
+</div>
 
 GitLayer is a powerful Figma plugin that brings Git-style version control directly into the design workflow. It bridges the gap between design and development by allowing designers to commit serialized JSON snapshots of their Figma canvas directly to a connected GitHub repository.
 
