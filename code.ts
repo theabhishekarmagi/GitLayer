@@ -385,106 +385,15 @@ if (figma.editorType === 'figma') {
         }
         return { pdfBase64, dataUrl };
       } catch (singleErr) {
-        console.warn('[GitLayer] Single target export failed, falling back to temp frame', singleErr);
+        console.warn('[GitLayer] Single target export failed', singleErr);
       }
     }
 
-    isExportingCanvasPreview = true;
-    let tempFrame: FrameNode | null = null;
-    try {
-      tempFrame = figma.createFrame();
-      tempFrame.name = '__gitlayer_temp_canvas_export__';
-      gitlayerInternalNodeIds.add(tempFrame.id);
-      tempFrame.setPluginData('gitlayer_temp_frame', 'true');
-      tempFrame.setPluginData('gitlayer_preview', 'true');
-      // NOTE: DO NOT set tempFrame.visible = false! Figma C++ export engine will fail with
-      // "This node may not have any visible layers". Instead, place it far off-screen.
-      tempFrame.x = -999999;
-      tempFrame.y = -999999;
-      tempFrame.fills = [];
-      tempFrame.clipsContent = false;
-      page.appendChild(tempFrame);
-
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const t of exportTargets) {
-        if ('x' in t && 'y' in t && 'width' in t && 'height' in t) {
-          minX = Math.min(minX, t.x);
-          minY = Math.min(minY, t.y);
-          maxX = Math.max(maxX, t.x + t.width);
-          maxY = Math.max(maxY, t.y + t.height);
-        }
-      }
-
-      if (!isFinite(minX) || !isFinite(minY)) {
-        return { pdfBase64: null, dataUrl: null };
-      }
-
-      const pad = 40;
-      for (const t of exportTargets) {
-        try {
-          const clone = t.clone();
-          gitlayerInternalNodeIds.add(clone.id);
-          // CRITICAL: Append to tempFrame FIRST, so Figma places it inside the frame,
-          // then assign local coordinates inside tempFrame. If assigned before appendChild,
-          // Figma's reparenting recalculates coordinates relative to -999999, throwing nodes 1M px away!
-          tempFrame.appendChild(clone);
-          clone.x = t.x - minX + pad;
-          clone.y = t.y - minY + pad;
-        } catch (cloneErr) {
-          console.warn('[GitLayer] Failed to clone target for preview', t.name, cloneErr);
-        }
-      }
-
-      if (tempFrame.children.length === 0) {
-        return { pdfBase64: null, dataUrl: null };
-      }
-
-      const frameW = Math.max(100, Math.ceil(maxX - minX + pad * 2));
-      const frameH = Math.max(100, Math.ceil(maxY - minY + pad * 2));
-      tempFrame.resize(frameW, frameH);
-
-      let pdfBase64: string | null = null;
-      try {
-        const pdfBytes = await tempFrame.exportAsync({ format: 'PDF' });
-        if (pdfBytes && pdfBytes.length > 0) {
-          pdfBase64 = figma.base64Encode(pdfBytes);
-        }
-      } catch (pdfErr) {
-        console.warn('[GitLayer] Canvas PDF export failed', pdfErr);
-      }
-
-      let dataUrl: string | null = null;
-      // Only invoke Figma WebGPU PNG rasterizer if PDF export failed
-      if (!pdfBase64) {
-        try {
-          const maxDim = Math.max(frameW, frameH);
-          const scale = maxDim > 1400 ? Math.max(0.05, 2800 / maxDim) : 2;
-          const pngBytes = await tempFrame.exportAsync({
-            format: 'PNG',
-            constraint: { type: 'SCALE', value: scale }
-          });
-          if (pngBytes && pngBytes.length > 0) {
-            dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
-          }
-        } catch (pngErr) {
-          console.warn('[GitLayer] Canvas PNG export failed', pngErr);
-        }
-      }
-
-      return { pdfBase64, dataUrl };
-    } catch (err) {
-      console.error('[GitLayer] Failed to export active canvas artifacts', err);
-      return { pdfBase64: null, dataUrl: null };
-    } finally {
-      if (tempFrame) {
-        try {
-          gitlayerInternalNodeIds.add(tempFrame.id);
-          tempFrame.remove();
-        } catch {}
-      }
-      suppressDocumentChangeUntil = Date.now() + 2500;
-      isExportingCanvasPreview = false;
-    }
+    // For canvases with multiple top-level artboards (e.g. 50 artboards spanning thousands of pixels),
+    // do NOT clone them into an offscreen mega-frame: it causes Figma GPU texture culling,
+    // dead-face placeholders on image fills, and an unreadable squished aspect ratio.
+    // Instead, return null so generateVisualPreview exports each top-level artboard individually with full fidelity!
+    return { pdfBase64: null, dataUrl: null };
   }
 
   async function generateVisualPreview(): Promise<any[] | null> {

@@ -1709,8 +1709,10 @@
 
         canvas.width = Math.round(viewport.width);
         canvas.height = Math.round(viewport.height);
-        canvas.style.width = `${Math.round(viewport.width / scale)}px`;
-        canvas.style.height = `${Math.round(viewport.height / scale)}px`;
+        canvas.style.maxWidth = '100%';
+        canvas.style.maxHeight = '480px';
+        canvas.style.width = 'auto';
+        canvas.style.height = 'auto';
 
         await page.render({
           canvasContext: ctx,
@@ -1719,7 +1721,10 @@
 
         canvas.style.display = 'block';
         const img = document.getElementById('diff-diagram-img');
-        if (img) img.style.display = 'none';
+        if (img) {
+          img.style.display = 'none';
+          img.src = '';
+        }
 
         return true;
       } catch (err) {
@@ -1875,7 +1880,7 @@
           });
           return s;
         } else if (t.dataUrl) {
-          return `<image href="${t.dataUrl}" xlink:href="${t.dataUrl}" x="${t.x}" y="${t.y}" width="${t.width}" height="${t.height}" preserveAspectRatio="xMidYMid meet" />`;
+          return `<image href="${t.dataUrl}" xlink:href="${t.dataUrl}" x="${t.x}" y="${t.y}" width="${t.width}" height="${t.height}" preserveAspectRatio="xMidYMid meet" onerror="this.style.display='none'" />`;
         }
         return '';
       }).join('');
@@ -1973,7 +1978,7 @@
         const imgFill = (n.fills || []).find(f => f.type === 'IMAGE');
         if (imgFill) {
           if (imgFill.dataUrl) {
-            return `<image href="${imgFill.dataUrl}" xlink:href="${imgFill.dataUrl}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" />`;
+            return `<image href="${imgFill.dataUrl}" xlink:href="${imgFill.dataUrl}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" onerror="this.style.display='none'" />`;
           }
           const lower = (n.name || '').toLowerCase();
           const iconColor = effectiveBgIsDark ? '#ffffff' : '#24292e';
@@ -2166,6 +2171,7 @@
         if (latestCanvasPdf && typeof pdfjsLib !== 'undefined') {
           if (canvas) canvas.style.display = 'block';
           img.style.display = 'none';
+          img.src = '';
           svg.style.display = 'none';
           empty.style.display = 'none';
           meta.style.display = 'block';
@@ -2844,13 +2850,40 @@
           // Step 1: Upload snapshot blob via Git Data Blobs API (supports up to 100MB)
           status.innerText = 'Uploading snapshot blob...';
           const contentBase64 = encodeBase64Utf8(JSON.stringify(payload));
-          const blobRes = await ghRequest('/git/blobs', {
+          let blobRes = await ghRequest('/git/blobs', {
             method: 'POST',
             body: JSON.stringify({
               content: contentBase64,
               encoding: 'base64'
             })
           });
+
+          // Handle empty / uninitialized repository (GitHub returns 409 Conflict: "Git Repository is empty.")
+          if (blobRes.status === 409) {
+            status.innerText = 'Initializing repository...';
+            const repoName = (repo.split('/')[1] || 'Design').trim();
+            const initReadme = encodeBase64Utf8(`# ${repoName}\n\nFigma design repository version controlled with [GitLayer](https://github.com/theabhishekarmagi/GitLayer).\n`);
+            const initRes = await ghRequest('/contents/README.md', {
+              method: 'PUT',
+              body: JSON.stringify({
+                message: 'Initial commit: Initialize repository with GitLayer',
+                content: initReadme,
+                branch: targetBranch
+              })
+            });
+            if (!initRes.ok) {
+              const initErr = await initRes.json().catch(() => ({}));
+              throw new Error(initErr.message || 'Failed to initialize empty repository');
+            }
+            // Retry uploading blob now that repository is initialized with a commit
+            blobRes = await ghRequest('/git/blobs', {
+              method: 'POST',
+              body: JSON.stringify({
+                content: contentBase64,
+                encoding: 'base64'
+              })
+            });
+          }
 
           if (!blobRes.ok) {
             const err = await blobRes.json().catch(() => ({}));
