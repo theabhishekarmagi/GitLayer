@@ -1692,8 +1692,19 @@
         if (!canvas) return false;
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-        // High resolution scale (3.5x) for vector clarity at up to 400% zoom
-        const scale = 3.5;
+        // Adaptive resolution scale: crystal-clear rendering without exceeding browser 2D canvas limits
+        const unscaledViewport = page.getViewport({ scale: 1.0 });
+        const origWidth = unscaledViewport.width || 800;
+        const origHeight = unscaledViewport.height || 600;
+        const maxDim = Math.max(origWidth, origHeight);
+
+        // Cap max canvas dimension to 2800px for speed, reliability, and low memory consumption
+        const maxAllowedCanvasDim = 2800;
+        let scale = 2.0;
+        if (maxDim * scale > maxAllowedCanvasDim) {
+          scale = Math.max(0.15, maxAllowedCanvasDim / maxDim);
+        }
+
         const viewport = page.getViewport({ scale: scale });
 
         canvas.width = Math.round(viewport.width);

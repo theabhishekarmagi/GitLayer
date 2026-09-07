@@ -266,14 +266,27 @@ if (figma.editorType === 'figma') {
 
   async function serializeCurrentPage() {
     const page = figma.currentPage;
-    const realChildren = page.children.filter(
+    let realChildren = page.children.filter(
       c => c.visible !== false &&
            c.type !== 'SLICE' &&
            c.getPluginData('gitlayer_preview') !== 'true' &&
            !c.name.startsWith('[GitLayer Preview]') &&
-           !c.name.startsWith('[Imported]') &&
            !c.name.startsWith('__gitlayer_')
     );
+
+    // Fallback: If canvas only contains a preview/imported container, serialize its children so design is visible and committable
+    if (realChildren.length === 0) {
+      const previewContainer = page.children.find(
+        c => (c.getPluginData('gitlayer_preview') === 'true' || c.name.startsWith('[GitLayer Preview]')) &&
+             'children' in c && (c as any).children.length > 0
+      );
+      if (previewContainer && 'children' in previewContainer) {
+        realChildren = (previewContainer as FrameNode).children.filter(
+          c => c.visible !== false && c.type !== 'SLICE'
+        ) as SceneNode[];
+      }
+    }
+
     const serializedChildren: any[] = [];
     for (const child of realChildren) {
       serializedChildren.push(await serializeNode(child));
@@ -319,14 +332,26 @@ if (figma.editorType === 'figma') {
       }
     } catch {}
 
-    const exportTargets = page.children.filter(
+    let exportTargets = page.children.filter(
       c => c.visible !== false &&
            c.type !== 'SLICE' &&
            c.getPluginData('gitlayer_preview') !== 'true' &&
            !c.name.startsWith('[GitLayer Preview]') &&
-           !c.name.startsWith('[Imported]') &&
            !c.name.startsWith('__gitlayer_')
     );
+
+    // Fallback: If canvas only contains a preview/imported container, export its children so preview window displays them
+    if (exportTargets.length === 0) {
+      const previewContainer = page.children.find(
+        c => (c.getPluginData('gitlayer_preview') === 'true' || c.name.startsWith('[GitLayer Preview]')) &&
+             'children' in c && (c as any).children.length > 0
+      );
+      if (previewContainer && 'children' in previewContainer) {
+        exportTargets = (previewContainer as FrameNode).children.filter(
+          c => c.visible !== false && c.type !== 'SLICE'
+        ) as SceneNode[];
+      }
+    }
 
     if (exportTargets.length === 0) {
       return { pdfBase64: null, dataUrl: null };
@@ -395,9 +420,12 @@ if (figma.editorType === 'figma') {
         try {
           const clone = t.clone();
           gitlayerInternalNodeIds.add(clone.id);
+          // CRITICAL: Append to tempFrame FIRST, so Figma places it inside the frame,
+          // then assign local coordinates inside tempFrame. If assigned before appendChild,
+          // Figma's reparenting recalculates coordinates relative to -999999, throwing nodes 1M px away!
+          tempFrame.appendChild(clone);
           clone.x = t.x - minX + pad;
           clone.y = t.y - minY + pad;
-          tempFrame.appendChild(clone);
         } catch (cloneErr) {
           console.warn('[GitLayer] Failed to clone target for preview', t.name, cloneErr);
         }
@@ -1110,11 +1138,12 @@ if (figma.editorType === 'figma') {
       figma.ui.postMessage({ type: 'pull-success', count: restored });
     } finally {
       isImportingOrPulling = false;
-      suppressDocumentChangeUntil = Date.now() + 2500;
+      suppressDocumentChangeUntil = Date.now() + 1000;
+      await sendPreview();
     }
   }
 
-  async function importCommitBesideCurrent(doc: any, commitInfo: { sha: string, message: string }) {
+  async function importCommitBesideCurrent(doc: any, commitInfo: { sha: string, message: string }, isPreview = false) {
     if (doc.pageName && doc.nodes) {
       figma.ui.postMessage({
         type: 'import-error',
@@ -1133,7 +1162,7 @@ if (figma.editorType === 'figma') {
     try {
       const currentPage = figma.currentPage;
 
-      // Clean up any existing preview frame from canvas first
+      // Clean up any existing temporary comparison preview frame from canvas first
       const existingPreviews = currentPage.children.filter(c => c.getPluginData('gitlayer_preview') === 'true');
       for (const p of existingPreviews) {
         try { p.remove(); } catch {}
@@ -1151,31 +1180,6 @@ if (figma.editorType === 'figma') {
         }
       }
 
-      const offsetX = hasExisting ? maxX + 160 : 0;
-      const offsetY = hasExisting ? minY : 0;
-
-      const shortSha = commitInfo.sha.substring(0, 7);
-      const title = commitInfo.message.split('\n')[0] || 'Historical Commit';
-
-      // Create a container Frame for this historical version
-      const container = figma.createFrame();
-      container.name = `[GitLayer Preview] ${title} (${shortSha})`;
-      container.setPluginData('gitlayer_preview', 'true');
-      gitlayerInternalNodeIds.add(container.id);
-      container.x = offsetX;
-      container.y = offsetY;
-      container.fills = []; // Transparent background
-      container.clipsContent = false;
-      container.strokes = [{
-        type: 'SOLID',
-        color: { r: 0.18, g: 0.5, b: 0.97 }, // #2f81f7 GitHub blue
-        opacity: 0.9
-      }];
-      container.strokeWeight = 2;
-      container.dashPattern = [8, 4];
-      container.cornerRadius = 8;
-      currentPage.appendChild(container);
-
       const topNodes = pages[0].children ?? [];
       let restored = 0;
 
@@ -1189,41 +1193,89 @@ if (figma.editorType === 'figma') {
       if (!isFinite(minTopX)) minTopX = 0;
       if (!isFinite(minTopY)) minTopY = 0;
 
-      for (const nodeData of topNodes) {
-        const built = await buildNode(nodeData, container);
-        if (built) {
-          if (typeof nodeData.x === 'number') {
-            built.x = (nodeData.x - minTopX) + 40;
-          }
-          if (typeof nodeData.y === 'number') {
-            built.y = (nodeData.y - minTopY) + 40;
-          }
-          restored++;
-        }
-        figma.ui.postMessage({
-          type: 'import-progress',
-          message: `Importing ${restored}/${topNodes.length} nodes...`
-        });
-        figma.ui.postMessage({
-          type: 'preview-canvas-progress',
-          message: `Building on canvas ${restored}/${topNodes.length}...`
-        });
-      }
+      const shortSha = commitInfo.sha.substring(0, 7);
+      const title = commitInfo.message.split('\n')[0] || 'Historical Commit';
 
-      // Auto-fit container around its imported children
-      let innerMaxX = 100;
-      let innerMaxY = 100;
-      for (const c of container.children) {
-        if ('x' in c && 'width' in c && 'y' in c && 'height' in c) {
-          innerMaxX = Math.max(innerMaxX, c.x + c.width);
-          innerMaxY = Math.max(innerMaxY, c.y + c.height);
+      // If user clicked "Import" onto an empty canvas, import directly as top-level canvas nodes
+      if (!isPreview && !hasExisting) {
+        for (const nodeData of topNodes) {
+          const built = await buildNode(nodeData, currentPage);
+          if (built) {
+            if (typeof nodeData.x === 'number') built.x = nodeData.x;
+            if (typeof nodeData.y === 'number') built.y = nodeData.y;
+            restored++;
+          }
+          figma.ui.postMessage({
+            type: 'import-progress',
+            message: `Importing ${restored}/${topNodes.length} nodes...`
+          });
         }
-      }
-      container.resize(Math.max(200, innerMaxX + 40), Math.max(200, innerMaxY + 40));
+        if (currentPage.children.length > 0) {
+          figma.viewport.scrollAndZoomIntoView(currentPage.children as SceneNode[]);
+        }
+      } else {
+        // Create container Frame
+        const offsetX = hasExisting ? maxX + 160 : 0;
+        const offsetY = hasExisting ? minY : 0;
 
-      // Focus & select the imported version
-      currentPage.selection = [container];
-      figma.viewport.scrollAndZoomIntoView([container]);
+        const container = figma.createFrame();
+        container.name = isPreview ? `[GitLayer Preview] ${title} (${shortSha})` : `[Imported] ${title} (${shortSha})`;
+        if (isPreview) {
+          container.setPluginData('gitlayer_preview', 'true');
+          gitlayerInternalNodeIds.add(container.id);
+          container.strokes = [{
+            type: 'SOLID',
+            color: { r: 0.18, g: 0.5, b: 0.97 }, // #2f81f7 GitHub blue
+            opacity: 0.9
+          }];
+          container.strokeWeight = 2;
+          container.dashPattern = [8, 4];
+        } else {
+          container.strokes = [];
+        }
+        container.x = offsetX;
+        container.y = offsetY;
+        container.fills = []; // Transparent background
+        container.clipsContent = false;
+        container.cornerRadius = 8;
+        currentPage.appendChild(container);
+
+        for (const nodeData of topNodes) {
+          const built = await buildNode(nodeData, container);
+          if (built) {
+            if (typeof nodeData.x === 'number') {
+              built.x = (nodeData.x - minTopX) + 40;
+            }
+            if (typeof nodeData.y === 'number') {
+              built.y = (nodeData.y - minTopY) + 40;
+            }
+            restored++;
+          }
+          figma.ui.postMessage({
+            type: 'import-progress',
+            message: `Importing ${restored}/${topNodes.length} nodes...`
+          });
+          figma.ui.postMessage({
+            type: 'preview-canvas-progress',
+            message: `Building on canvas ${restored}/${topNodes.length}...`
+          });
+        }
+
+        // Auto-fit container around its imported children
+        let innerMaxX = 100;
+        let innerMaxY = 100;
+        for (const c of container.children) {
+          if ('x' in c && 'width' in c && 'y' in c && 'height' in c) {
+            innerMaxX = Math.max(innerMaxX, c.x + c.width);
+            innerMaxY = Math.max(innerMaxY, c.y + c.height);
+          }
+        }
+        container.resize(Math.max(200, innerMaxX + 40), Math.max(200, innerMaxY + 40));
+
+        // Focus & select the imported version
+        currentPage.selection = [container];
+        figma.viewport.scrollAndZoomIntoView([container]);
+      }
 
       figma.ui.postMessage({
         type: 'import-success',
@@ -1239,7 +1291,8 @@ if (figma.editorType === 'figma') {
       });
     } finally {
       isImportingOrPulling = false;
-      suppressDocumentChangeUntil = Date.now() + 2500;
+      suppressDocumentChangeUntil = Date.now() + 1000;
+      await sendPreview();
     }
   }
 
@@ -1247,8 +1300,7 @@ if (figma.editorType === 'figma') {
     const currentPage = figma.currentPage;
     const existingPreviews = currentPage.children.filter(
       c => c.getPluginData('gitlayer_preview') === 'true' ||
-           c.name.startsWith('[GitLayer Preview]') ||
-           c.name.startsWith('[Imported]')
+           c.name.startsWith('[GitLayer Preview]')
     );
     let count = 0;
     for (const p of existingPreviews) {
@@ -1258,6 +1310,7 @@ if (figma.editorType === 'figma') {
       type: 'preview-canvas-dismissed',
       count: count
     });
+    sendPreview();
   }
 
   let isRenderingCommitImage = false;
@@ -1522,7 +1575,7 @@ if (figma.editorType === 'figma') {
       }
     } else if (msg.type === 'import-commit-to-canvas' || msg.type === 'preview-commit-on-canvas') {
       try {
-        await importCommitBesideCurrent(msg.doc, msg.commit);
+        await importCommitBesideCurrent(msg.doc, msg.commit, msg.type === 'preview-commit-on-canvas');
       } catch (err: any) {
         figma.ui.postMessage({ type: 'preview-canvas-error', message: err?.message ?? 'Canvas preview failed.' });
       }
