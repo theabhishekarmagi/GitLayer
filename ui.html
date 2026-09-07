@@ -1977,8 +1977,11 @@
         // Image fill check (handles raw image hash / icons from commits)
         const imgFill = (n.fills || []).find(f => f.type === 'IMAGE');
         if (imgFill) {
-          if (imgFill.dataUrl) {
-            return `<image href="${imgFill.dataUrl}" xlink:href="${imgFill.dataUrl}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" onerror="this.style.display='none'" />`;
+          const activeImages = (activeMainTab === 'history' ? selectedCommitDoc?.images : latestCanvasPayload?.images) || null;
+          const imgSrc = imgFill.dataUrl || imgFill.imageBase64 || (activeImages && imgFill.imageHash ? activeImages[imgFill.imageHash] : null);
+          if (imgSrc) {
+            const dataUrl = imgSrc.startsWith('data:') ? imgSrc : `data:image/png;base64,${imgSrc}`;
+            return `<image href="${dataUrl}" xlink:href="${dataUrl}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" onerror="this.style.display='none'" />`;
           }
           const lower = (n.name || '').toLowerCase();
           const iconColor = effectiveBgIsDark ? '#ffffff' : '#24292e';
@@ -2306,7 +2309,19 @@
             }
           }
 
-          // 5. Request native C++ render from Figma engine for legacy snapshots without preview
+          // 5. Instant vector SVG preview directly from snapshot node tree (instant, zero canvas mutations!)
+          if (!rendered && topNodes.length > 0) {
+            if (canvas) canvas.style.display = 'none';
+            svg.innerHTML = renderNodesToSvg(topNodes);
+            svg.style.display = 'block';
+            img.style.display = 'none';
+            empty.style.display = 'none';
+            meta.style.display = 'block';
+            meta.innerText = `${topNodes.length} shape${topNodes.length === 1 ? '' : 's'} in ${shortSha} (Vector)`;
+            rendered = true;
+          }
+
+          // 6. Request native C++ render from Figma engine as fallback only if SVG preview could not be generated
           if (!rendered && historyImageCache.get(selectedCommit.sha) !== 'failed' && topNodes.length > 0) {
             if (canvas) canvas.style.display = 'none';
             img.style.display = 'none';
@@ -2546,6 +2561,9 @@
 
     // Select and inspect commit in the right pane
     async function selectHistoryCommit(commit) {
+      if (selectedCommit && selectedCommit.sha === commit.sha && selectedCommitDoc) {
+        return;
+      }
       selectedCommit = commit;
       selectedCommitDoc = null;
       resetZoom();

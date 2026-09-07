@@ -868,6 +868,8 @@ if (figma.editorType === 'figma') {
                 catch { }
         }
         // 6. Text fills
+        if (textNode.removed)
+            return;
         if (Array.isArray(data.fills) && data.fills.length > 0) {
             const f = data.fills[0];
             if (f.type === 'SOLID' && f.color) {
@@ -909,6 +911,8 @@ if (figma.editorType === 'figma') {
         catch { }
     }
     async function buildNode(data, parent) {
+        if (!parent || parent.removed)
+            return null;
         try {
             switch (data.type) {
                 case 'FRAME':
@@ -1301,6 +1305,9 @@ if (figma.editorType === 'figma') {
     }
     let isRenderingCommitImage = false;
     async function renderCommitToArtifacts(doc) {
+        if (isRenderingCommitImage) {
+            return { dataUrl: null, pdfBase64: null };
+        }
         if (doc?.previewPdf && typeof doc.previewPdf === 'string') {
             return { dataUrl: doc.previewImage || null, pdfBase64: doc.previewPdf };
         }
@@ -1314,17 +1321,9 @@ if (figma.editorType === 'figma') {
         activeDocImages = doc?.images || null;
         let tempFrame = null;
         try {
-            // Clean up any stale temp render frames first
-            try {
-                for (const child of figma.currentPage.children) {
-                    if (child.name === '__gitlayer_temp_render__' || child.name.startsWith('__gitlayer_temp_') || child.getPluginData('gitlayer_temp_frame') === 'true') {
-                        child.remove();
-                    }
-                }
-            }
-            catch { }
+            const renderId = Math.random().toString(36).substring(2, 7);
             tempFrame = figma.createFrame();
-            tempFrame.name = '__gitlayer_temp_render__';
+            tempFrame.name = `__gitlayer_temp_render_${renderId}__`;
             gitlayerInternalNodeIds.add(tempFrame.id);
             tempFrame.setPluginData('gitlayer_temp_frame', 'true');
             tempFrame.setPluginData('gitlayer_preview', 'true');
@@ -1336,7 +1335,12 @@ if (figma.editorType === 'figma') {
             tempFrame.clipsContent = false;
             figma.currentPage.appendChild(tempFrame);
             for (const nodeData of topNodes) {
+                if (tempFrame.removed)
+                    break;
                 await buildNode(nodeData, tempFrame);
+            }
+            if (tempFrame.removed) {
+                return { dataUrl: null, pdfBase64: null };
             }
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (const c of tempFrame.children) {
@@ -1394,7 +1398,7 @@ if (figma.editorType === 'figma') {
             return { dataUrl: null, pdfBase64: null };
         }
         finally {
-            if (tempFrame) {
+            if (tempFrame && !tempFrame.removed) {
                 try {
                     gitlayerInternalNodeIds.add(tempFrame.id);
                     tempFrame.remove();
@@ -1575,6 +1579,8 @@ if (figma.editorType === 'figma') {
             catch { }
         }
         else if (msg.type === 'render-commit-image' || msg.type === 'render-commit-pdf') {
+            if (isRenderingCommitImage)
+                return;
             try {
                 const { dataUrl, pdfBase64 } = await renderCommitToArtifacts(msg.doc);
                 figma.ui.postMessage({
