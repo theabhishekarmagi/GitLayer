@@ -3169,8 +3169,13 @@
         if (dismissBtn) dismissBtn.style.display = 'inline-block';
         const status = document.getElementById('status-text');
         if (status) {
-          status.innerText = `✅ Preview placed beside canvas in Figma!`;
+          status.innerText = 'Imported successfully';
           status.style.color = '#89d185';
+          setTimeout(() => {
+            if (status.innerText === 'Imported successfully') {
+              status.innerText = '';
+            }
+          }, 3500);
         }
       }
 
@@ -3179,8 +3184,7 @@
         if (dismissBtn) dismissBtn.style.display = 'none';
         const status = document.getElementById('status-text');
         if (status) {
-          status.innerText = 'Canvas preview removed';
-          status.style.color = '#8b949e';
+          status.innerText = '';
         }
       }
 
@@ -3227,8 +3231,13 @@
       if (msg.type === 'import-success') {
         const status = document.getElementById('status-text');
         if (status) {
-          status.innerText = `✅ Imported "${msg.title} (${msg.sha})" beside canvas!`;
+          status.innerText = 'Imported successfully';
           status.style.color = '#89d185';
+          setTimeout(() => {
+            if (status.innerText === 'Imported successfully') {
+              status.innerText = '';
+            }
+          }, 3500);
         }
         document.querySelectorAll('.btn-item-import').forEach(b => {
           b.disabled = false;
