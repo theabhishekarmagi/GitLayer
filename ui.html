@@ -2665,7 +2665,11 @@
       const btn = document.getElementById('commit-btn');
       const lbl = document.getElementById('commit-branch-label');
       if (lbl) lbl.innerText = currentBranch;
-      if (btn) btn.innerHTML = `Commit to <strong>${currentBranch}</strong>`;
+      if (btn) {
+        btn.style.backgroundColor = '';
+        btn.style.borderColor = '';
+        btn.innerHTML = `Commit to <strong id="commit-branch-label">${escapeHtml(currentBranch)}</strong>`;
+      }
     }
 
     // Create New Branch API
@@ -2775,16 +2779,20 @@
     document.getElementById('btn-min-push').onclick = () => {
       const summary = document.getElementById('min-commit-summary').value.trim();
       const status = document.getElementById('min-status-text');
+      const btn = document.getElementById('btn-min-push');
       
       if (!summary) {
-        status.innerText = 'Summary is required';
-        status.style.color = '#f14c4c';
+        if (status) {
+          status.innerText = 'Summary is required';
+          status.style.color = '#f14c4c';
+        }
+        document.getElementById('min-commit-summary').focus();
         return;
       }
       
-      status.innerText = 'Pushing...';
-      status.style.color = '#cccccc';
-      document.getElementById('btn-min-push').disabled = true;
+      if (status) status.innerText = '';
+      btn.disabled = true;
+      btn.innerText = 'Committing...';
       parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, branch: currentBranch, summary, source: 'min' } }, '*');
     };
 
@@ -2793,16 +2801,20 @@
     document.getElementById('commit-btn').onclick = () => {
       const summary = document.getElementById('commit-summary').value.trim();
       const status = document.getElementById('status-text');
+      const btn = document.getElementById('commit-btn');
       
       if (!summary) {
-        status.innerText = 'Summary is required';
-        status.style.color = '#f14c4c';
+        if (status) {
+          status.innerText = 'Summary is required';
+          status.style.color = '#f14c4c';
+        }
+        document.getElementById('commit-summary').focus();
         return;
       }
       
-      status.innerText = 'Serializing...';
-      status.style.color = '#cccccc';
-      document.getElementById('commit-btn').disabled = true;
+      if (status) status.innerText = '';
+      btn.disabled = true;
+      btn.innerText = 'Committing...';
       parent.postMessage({ pluginMessage: { type: 'serialize-and-commit', pat: currentPat, repo: currentRepo, branch: currentBranch, summary, source: 'max' } }, '*');
     };
 
@@ -2845,8 +2857,16 @@
       if (msg.type === 'commit-payload') {
         const isMin = msg.source === 'min';
         const status = isMin ? document.getElementById('min-status-text') : document.getElementById('status-text');
-        status.innerText = 'Pushing to GitHub...';
-        status.style.color = '#aaa';
+        const commitBtn = isMin ? document.getElementById('btn-min-push') : document.getElementById('commit-btn');
+        if (status) status.innerText = '';
+        if (commitBtn) {
+          commitBtn.disabled = true;
+          commitBtn.innerHTML = 'Pushing to GitHub...';
+        }
+
+        const setCommitProgress = (text) => {
+          if (commitBtn) commitBtn.innerHTML = text;
+        };
 
         try {
           const { pat, repo, branch, payload, nativeSvg, message } = msg;
@@ -2866,7 +2886,7 @@
           };
 
           // Step 1: Upload snapshot blob via Git Data Blobs API (supports up to 100MB)
-          status.innerText = 'Uploading snapshot blob...';
+          setCommitProgress('Uploading snapshot...');
           const jsonString = JSON.stringify(payload);
           let blobRes = await ghRequest('/git/blobs', {
             method: 'POST',
@@ -2878,7 +2898,7 @@
 
           // Handle empty / uninitialized repository (GitHub returns 409 Conflict: "Git Repository is empty.")
           if (blobRes.status === 409) {
-            status.innerText = 'Initializing repository...';
+            setCommitProgress('Initializing repo...');
             const repoName = (repo.split('/')[1] || 'Design').trim();
             const initReadme = encodeBase64Utf8(`# ${repoName}\n\nFigma design repository version controlled with [GitLayer](https://github.com/theabhishekarmagi/GitLayer).\n`);
             const initRes = await ghRequest('/contents/README.md', {
@@ -2931,7 +2951,7 @@
           }
 
           // Step 3: Check branch reference and resolve parent commit / base tree
-          status.innerText = 'Resolving Git tree...';
+          setCommitProgress('Resolving Git tree...');
           let parentCommitSha = null;
           let baseTreeSha = null;
           let refExists = false;
@@ -2972,7 +2992,7 @@
           }
 
           // Step 4: Create new Git Tree containing the snapshot (and preview.svg)
-          status.innerText = 'Creating Git tree...';
+          setCommitProgress('Creating Git tree...');
           const treeItems = [
             {
               path: 'figma-snapshot.json',
@@ -3007,7 +3027,7 @@
           const newTreeSha = treeData.sha;
 
           // Step 5: Create Git Commit
-          status.innerText = 'Creating Git commit...';
+          setCommitProgress('Creating commit...');
           const commitRes = await ghRequest('/git/commits', {
             method: 'POST',
             body: JSON.stringify({
@@ -3024,7 +3044,7 @@
           const newCommitSha = commitData.sha;
 
           // Step 6: Update or create branch reference
-          status.innerText = 'Updating branch...';
+          setCommitProgress('Updating branch...');
           if (refExists) {
             const updateRes = await ghRequest(`/git/refs/heads/${targetBranch}`, {
               method: 'PATCH',
@@ -3061,17 +3081,39 @@
             }
           }
 
-          status.innerText = 'Commit successful! 🎉';
-          status.style.color = '#89d185';
+          if (status) status.innerText = '';
+
+          if (commitBtn) {
+            commitBtn.innerHTML = 'Commit successful! 🎉';
+            commitBtn.style.backgroundColor = '#238636';
+            commitBtn.style.borderColor = '#2ea043';
+            commitBtn.disabled = true;
+          }
+
           if (isMin) {
             document.getElementById('min-commit-summary').value = '';
             document.getElementById('min-commit-desc').value = '';
-            document.getElementById('btn-min-push').disabled = false;
-            setTimeout(() => { document.getElementById('btn-min-toggle-commit').click(); status.innerText = ''; }, 1500);
+            setTimeout(() => {
+              if (commitBtn) {
+                commitBtn.disabled = false;
+                commitBtn.style.backgroundColor = '';
+                commitBtn.style.borderColor = '';
+                commitBtn.innerHTML = `Push to <strong>${escapeHtml(currentBranch)}</strong>`;
+              }
+              const toggleBtn = document.getElementById('btn-min-toggle-commit');
+              if (toggleBtn) toggleBtn.click();
+            }, 1800);
           } else {
             document.getElementById('commit-summary').value = '';
             document.getElementById('commit-desc').value = '';
-            document.getElementById('commit-btn').disabled = false;
+            setTimeout(() => {
+              if (commitBtn) {
+                commitBtn.disabled = false;
+                commitBtn.style.backgroundColor = '';
+                commitBtn.style.borderColor = '';
+                updateCommitBtn();
+              }
+            }, 2500);
           }
           // Refresh branches and commit history after commit
           fetchBranches();
@@ -3079,10 +3121,20 @@
           // Refresh diff preview after commit
           parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
         } catch (e) {
-          status.innerText = 'Error: ' + e.message;
-          status.style.color = '#f14c4c';
-          if (isMin) document.getElementById('btn-min-push').disabled = false;
-          else document.getElementById('commit-btn').disabled = false;
+          if (commitBtn) {
+            commitBtn.disabled = false;
+            commitBtn.style.backgroundColor = '';
+            commitBtn.style.borderColor = '';
+            if (isMin) {
+              commitBtn.innerHTML = `Push to <strong>${escapeHtml(currentBranch)}</strong>`;
+            } else {
+              updateCommitBtn();
+            }
+          }
+          if (status) {
+            status.innerText = 'Error: ' + e.message;
+            status.style.color = '#f14c4c';
+          }
         }
       }
 
