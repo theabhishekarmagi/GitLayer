@@ -9,12 +9,18 @@ GitLayer is a powerful Figma plugin that brings Git-style version control direct
 ## Features
 
 - **GitHub Authentication**: Securely connect to your GitHub account using a Personal Access Token (PAT). Tokens are persisted locally for a seamless experience.
-- **Repository Management**: Create new, private repositories directly from Figma (automatically tagged with `figma-repo`) or select an existing repository from your account.
+- **Repository & Branch Management**: Create new repositories or select existing ones, switch branches, and create new branches directly within Figma.
+- **Branch Comparison**: Compare branches with real-time Ahead / Behind counters and commits matching GitHub Desktop.
+- **Visual Diagram & Inspection**: View interactive diagram previews of historical commits and place previews directly beside your current canvas.
 - **Dual UI Modes**: 
   - **Minimized Floating Toolbar**: A sleek, non-intrusive pill interface that hovers over your canvas for quick commits.
-  - **GitHub Desktop Interface**: A maximized view that mirrors the GitHub Desktop experience, complete with a diff viewer.
+  - **GitHub Desktop Interface**: A maximized view that mirrors the GitHub Desktop experience, complete with history and branch comparison.
 - **Live Sync**: Instantly watch your Figma nodes serialize into JSON in real-time as you drag, drop, and edit shapes on the canvas.
-- **One-Click Commits**: Write a summary, add a description, and push your design snapshot directly to the `main` branch without ever leaving Figma.
+- **One-Click Commits**: Write a summary, add a description, and push your design snapshot directly to your branch without ever leaving Figma.
+
+<p align="center">
+  <img src="assets/cover-art-1920x960.png" width="100%" alt="GitLayer - Git version control directly inside Figma" />
+</p>
 
 ## How it Works
 
