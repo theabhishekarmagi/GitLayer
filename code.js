@@ -347,9 +347,13 @@ if (figma.editorType === 'figma') {
                 let dataUrl = null;
                 if (!pdfBase64) {
                     try {
+                        const targetW = singleTarget.width || 1000;
+                        const targetH = singleTarget.height || 1000;
+                        const maxDim = Math.max(targetW, targetH);
+                        const scale = maxDim > 1400 ? Math.max(0.05, 2800 / maxDim) : 2;
                         const pngBytes = await singleTarget.exportAsync({
                             format: 'PNG',
-                            constraint: { type: 'SCALE', value: 2 }
+                            constraint: { type: 'SCALE', value: scale }
                         });
                         if (pngBytes && pngBytes.length > 0) {
                             dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
@@ -426,9 +430,11 @@ if (figma.editorType === 'figma') {
             // Only invoke Figma WebGPU PNG rasterizer if PDF export failed
             if (!pdfBase64) {
                 try {
+                    const maxDim = Math.max(frameW, frameH);
+                    const scale = maxDim > 1400 ? Math.max(0.05, 2800 / maxDim) : 2;
                     const pngBytes = await tempFrame.exportAsync({
                         format: 'PNG',
-                        constraint: { type: 'SCALE', value: 2 }
+                        constraint: { type: 'SCALE', value: scale }
                     });
                     if (pngBytes && pngBytes.length > 0) {
                         dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
@@ -490,11 +496,13 @@ if (figma.editorType === 'figma') {
                 catch (svgErr) {
                     // If SVG export fails for this specific node, fall back to high-res PNG
                 }
-                // Raster fallback: 2x high-resolution PNG
+                // Raster fallback: scaled high-resolution PNG
                 try {
+                    const maxDim = Math.max(child.width, child.height);
+                    const scale = maxDim > 1400 ? Math.max(0.05, 2800 / maxDim) : 2;
                     const bytes = await child.exportAsync({
                         format: 'PNG',
-                        constraint: { type: 'SCALE', value: 2 }
+                        constraint: { type: 'SCALE', value: scale }
                     });
                     const base64 = figma.base64Encode(bytes);
                     return {
@@ -1428,13 +1436,15 @@ if (figma.editorType === 'figma') {
             catch (pdfErr) {
                 console.warn('[GitLayer] PDF export failed', pdfErr);
             }
-            // 2. 2x PNG export fallback (only if PDF export failed)
+            // 2. High-resolution PNG export fallback (only if PDF export failed)
             let dataUrl = null;
             if (!pdfBase64) {
                 try {
+                    const maxDim = Math.max(frameW, frameH);
+                    const scale = maxDim > 1400 ? Math.max(0.05, 2800 / maxDim) : 2;
                     const pngBytes = await tempFrame.exportAsync({
                         format: 'PNG',
-                        constraint: { type: 'SCALE', value: 2 }
+                        constraint: { type: 'SCALE', value: scale }
                     });
                     if (pngBytes && pngBytes.length > 0) {
                         dataUrl = `data:image/png;base64,${figma.base64Encode(pngBytes)}`;
@@ -1597,12 +1607,21 @@ if (figma.editorType === 'figma') {
                     payload.thumbnails = thumbnails;
                 }
             }
+            let nativeSvg = null;
+            try {
+                const validChildren = figma.currentPage.children.filter(c => c.visible !== false && c.type !== 'SLICE' && !c.name.startsWith('__gitlayer_'));
+                if (validChildren.length === 1 && typeof validChildren[0].exportAsync === 'function') {
+                    nativeSvg = await validChildren[0].exportAsync({ format: 'SVG_STRING', svgOutlineText: false });
+                }
+            }
+            catch { }
             figma.ui.postMessage({
                 type: 'commit-payload',
                 pat: msg.pat,
                 repo: msg.repo,
                 branch: msg.branch,
                 payload: payload,
+                nativeSvg: nativeSvg,
                 message: msg.summary || `GitLayer: Sync "${figma.currentPage.name}"`,
                 source: msg.source
             });

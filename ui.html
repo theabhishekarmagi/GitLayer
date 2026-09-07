@@ -2446,8 +2446,13 @@
         });
         
         if (!res.ok) {
-          const e = await res.json();
-          list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">${e.message || 'Failed to load history.'}</div>`;
+          const e = await res.json().catch(() => ({}));
+          const errMsg = (e.message || '').toLowerCase();
+          if (res.status === 409 || res.status === 404 || errMsg.includes('empty') || errMsg.includes('branch')) {
+            list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">Repository or branch is empty.<br><span style="font-size: 11px; color: #6e7681; display: inline-block; margin-top: 4px;">Commit your design to create the first version!</span></div>';
+            return;
+          }
+          list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">${escapeHtml(e.message || 'Failed to load history.')}</div>`;
           return;
         }
         
@@ -2812,7 +2817,7 @@
         }
       }
       
-      // Handle commit execution
+      // Handle commit execution via GitHub Git Database API (supports files up to 100MB and empty repos)
       if (msg.type === 'commit-payload') {
         const isMin = msg.source === 'min';
         const status = isMin ? document.getElementById('min-status-text') : document.getElementById('status-text');
@@ -2821,49 +2826,188 @@
 
         try {
           const { pat, repo, branch, payload, nativeSvg, message } = msg;
+          const targetBranch = branch || 'main';
 
+          const ghRequest = async (endpoint, options = {}) => {
+            const res = await fetch(`https://api.github.com/repos/${repo}${endpoint}`, {
+              ...options,
+              headers: {
+                'Authorization': `Bearer ${pat}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json',
+                ...(options.headers || {})
+              }
+            });
+            return res;
+          };
+
+          // Step 1: Upload snapshot blob via Git Data Blobs API (supports up to 100MB)
+          status.innerText = 'Uploading snapshot blob...';
           const contentBase64 = encodeBase64Utf8(JSON.stringify(payload));
-          const url = `https://api.github.com/repos/${repo}/contents/figma-snapshot.json`;
-          let sha = null;
-
-          try {
-            const getRes = await fetch(`${url}?ref=${branch || 'main'}`, { headers: { 'Authorization': `Bearer ${pat}` } });
-            if (getRes.ok) sha = (await getRes.json()).sha;
-          } catch (e) {}
-
-          const body = { message: message || 'GitLayer: Sync design', content: contentBase64, branch: branch || 'main' };
-          if (sha) body.sha = sha;
-
-          const res = await fetch(url, {
-            method: 'PUT',
-            headers: { 'Authorization': `Bearer ${pat}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
-            body: JSON.stringify(body)
+          const blobRes = await ghRequest('/git/blobs', {
+            method: 'POST',
+            body: JSON.stringify({
+              content: contentBase64,
+              encoding: 'base64'
+            })
           });
 
-          if (!res.ok) {
-            const error = await res.json().catch(() => ({}));
-            throw new Error(error.message || 'GitHub push failed');
+          if (!blobRes.ok) {
+            const err = await blobRes.json().catch(() => ({}));
+            throw new Error(err.message || 'Failed to upload snapshot blob to GitHub');
           }
+          const blobData = await blobRes.json();
+          const snapshotBlobSha = blobData.sha;
 
-          // If native SVG export is available, also commit preview.svg so it renders in GitHub Web UI
+          // Step 2: Upload preview.svg blob if available
+          let svgBlobSha = null;
           if (nativeSvg) {
             try {
               const svgBase64 = encodeBase64Utf8(nativeSvg);
-              const svgUrl = `https://api.github.com/repos/${repo}/contents/preview.svg`;
-              let svgSha = null;
-              try {
-                const getSvgRes = await fetch(`${svgUrl}?ref=${branch || 'main'}`, { headers: { 'Authorization': `Bearer ${pat}` } });
-                if (getSvgRes.ok) svgSha = (await getSvgRes.json()).sha;
-              } catch (e) {}
-              const svgBody = { message: `GitLayer: Update preview.svg`, content: svgBase64, branch: branch || 'main' };
-              if (svgSha) svgBody.sha = svgSha;
-              await fetch(svgUrl, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${pat}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github.v3+json' },
-                body: JSON.stringify(svgBody)
+              const svgRes = await ghRequest('/git/blobs', {
+                method: 'POST',
+                body: JSON.stringify({
+                  content: svgBase64,
+                  encoding: 'base64'
+                })
               });
+              if (svgRes.ok) {
+                const svgData = await svgRes.json();
+                svgBlobSha = svgData.sha;
+              }
             } catch (svgErr) {
-              console.warn('[GitLayer] Could not push preview.svg separately', svgErr);
+              console.warn('[GitLayer] Could not push preview.svg blob', svgErr);
+            }
+          }
+
+          // Step 3: Check branch reference and resolve parent commit / base tree
+          status.innerText = 'Resolving Git tree...';
+          let parentCommitSha = null;
+          let baseTreeSha = null;
+          let refExists = false;
+
+          const refRes = await ghRequest(`/git/ref/heads/${targetBranch}`);
+          if (refRes.ok) {
+            const refData = await refRes.json();
+            parentCommitSha = refData.object ? refData.object.sha : null;
+            refExists = true;
+          } else {
+            // Target branch doesn't exist yet; check if default branch exists to branch off it
+            try {
+              const repoRes = await ghRequest('');
+              if (repoRes.ok) {
+                const repoInfo = await repoRes.json();
+                const defBranch = repoInfo.default_branch;
+                if (defBranch && defBranch !== targetBranch) {
+                  const defRefRes = await ghRequest(`/git/ref/heads/${defBranch}`);
+                  if (defRefRes.ok) {
+                    const defRefData = await defRefRes.json();
+                    parentCommitSha = defRefData.object ? defRefData.object.sha : null;
+                  }
+                }
+              }
+            } catch {}
+          }
+
+          if (parentCommitSha) {
+            try {
+              const parentCommitRes = await ghRequest(`/git/commits/${parentCommitSha}`);
+              if (parentCommitRes.ok) {
+                const parentCommitData = await parentCommitRes.json();
+                baseTreeSha = parentCommitData.tree ? parentCommitData.tree.sha : null;
+              }
+            } catch (err) {
+              console.warn('[GitLayer] Could not fetch parent commit tree', err);
+            }
+          }
+
+          // Step 4: Create new Git Tree containing the snapshot (and preview.svg)
+          status.innerText = 'Creating Git tree...';
+          const treeItems = [
+            {
+              path: 'figma-snapshot.json',
+              mode: '100644',
+              type: 'blob',
+              sha: snapshotBlobSha
+            }
+          ];
+          if (svgBlobSha) {
+            treeItems.push({
+              path: 'preview.svg',
+              mode: '100644',
+              type: 'blob',
+              sha: svgBlobSha
+            });
+          }
+
+          const treePayload = { tree: treeItems };
+          if (baseTreeSha) {
+            treePayload.base_tree = baseTreeSha;
+          }
+
+          const treeRes = await ghRequest('/git/trees', {
+            method: 'POST',
+            body: JSON.stringify(treePayload)
+          });
+          if (!treeRes.ok) {
+            const err = await treeRes.json().catch(() => ({}));
+            throw new Error(err.message || 'Failed to create Git tree');
+          }
+          const treeData = await treeRes.json();
+          const newTreeSha = treeData.sha;
+
+          // Step 5: Create Git Commit
+          status.innerText = 'Creating Git commit...';
+          const commitRes = await ghRequest('/git/commits', {
+            method: 'POST',
+            body: JSON.stringify({
+              message: message || 'GitLayer: Sync design',
+              tree: newTreeSha,
+              parents: parentCommitSha ? [parentCommitSha] : []
+            })
+          });
+          if (!commitRes.ok) {
+            const err = await commitRes.json().catch(() => ({}));
+            throw new Error(err.message || 'Failed to create Git commit');
+          }
+          const commitData = await commitRes.json();
+          const newCommitSha = commitData.sha;
+
+          // Step 6: Update or create branch reference
+          status.innerText = 'Updating branch...';
+          if (refExists) {
+            const updateRes = await ghRequest(`/git/refs/heads/${targetBranch}`, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                sha: newCommitSha,
+                force: false
+              })
+            });
+            if (!updateRes.ok) {
+              const err = await updateRes.json().catch(() => ({}));
+              throw new Error(err.message || 'Failed to update branch reference');
+            }
+          } else {
+            const createRefRes = await ghRequest('/git/refs', {
+              method: 'POST',
+              body: JSON.stringify({
+                ref: `refs/heads/${targetBranch}`,
+                sha: newCommitSha
+              })
+            });
+            if (!createRefRes.ok) {
+              // Fallback: in case GitHub created default branch automatically, patch it
+              const patchFallback = await ghRequest(`/git/refs/heads/${targetBranch}`, {
+                method: 'PATCH',
+                body: JSON.stringify({
+                  sha: newCommitSha,
+                  force: true
+                })
+              });
+              if (!patchFallback.ok) {
+                const err = await createRefRes.json().catch(() => ({}));
+                throw new Error(err.message || 'Failed to set branch reference');
+              }
             }
           }
 
@@ -2879,6 +3023,9 @@
             document.getElementById('commit-desc').value = '';
             document.getElementById('commit-btn').disabled = false;
           }
+          // Refresh branches and commit history after commit
+          fetchBranches();
+          fetchCommitHistory();
           // Refresh diff preview after commit
           parent.postMessage({ pluginMessage: { type: 'request-preview' } }, '*');
         } catch (e) {
