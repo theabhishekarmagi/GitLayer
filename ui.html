@@ -374,6 +374,67 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .compare-header-btn {
+      width: 100%;
+      background: transparent;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #8b949e;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: flex-start;
+      transition: all 0.15s ease;
+      box-sizing: border-box;
+    }
+    .compare-header-btn:hover:not(:disabled) {
+      border-color: #58a6ff;
+      color: #c9d1d9;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .compare-header-btn:disabled {
+      cursor: default;
+      color: #6e7681;
+      border-color: #21262d;
+      justify-content: center;
+    }
+    .compare-branch-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 14px;
+      cursor: pointer;
+      transition: background 0.1s;
+      user-select: none;
+    }
+    .compare-branch-row:hover {
+      background: #1c2128;
+    }
+    .compare-tab-btn {
+      flex: 1;
+      padding: 6px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      outline: none;
+      transition: all 0.15s;
+    }
+    .compare-tab-btn.active {
+      background: #0969da;
+      color: #ffffff;
+    }
+    .compare-tab-btn:not(.active) {
+      background: transparent;
+      color: #8b949e;
+    }
+    .compare-tab-btn:not(.active):hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: #c9d1d9;
+    }
     .zoom-btn {
       background: transparent;
       border: none;
@@ -950,7 +1011,8 @@
 
         <!-- History Tab -->
         <div id="tab-content-history" style="display: none; flex-direction: column; flex: 1; overflow: hidden;">
-          <div id="history-list" style="flex: 1; overflow-y: auto; padding: 8px 0;">
+          <div id="history-compare-container"></div>
+          <div id="history-list" style="flex: 1; overflow-y: auto; padding: 4px 0;">
             <div style="padding: 32px 16px; text-align: center; color: #8b949e; font-size: 13px;" id="history-loading">
               <div style="margin-bottom: 8px;">
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="#444"><path d="M12 3a9 9 0 100 18A9 9 0 0012 3zm0-1a10 10 0 110 20A10 10 0 0112 2zm.75 5.25a.75.75 0 00-1.5 0v5.69L8.22 9.97a.75.75 0 00-1.06 1.06l3.5 3.5a.75.75 0 001.06 0l3.5-3.5a.75.75 0 00-1.06-1.06l-1.44 1.44V7.25z"/></svg>
@@ -1070,6 +1132,23 @@
     let currentBranch = 'main';
     let cachedRepos = [];
     let cachedBranches = [];
+
+    // --- Branch Compare State (GitHub Desktop style) ---
+    let comparedBranch = null; // string | null
+    let compareActiveTab = 'behind'; // 'behind' | 'ahead'
+    let isSelectingCompareBranch = false;
+    let compareFilterQuery = '';
+    const branchCompareSummaryCache = new Map(); // branchName -> { behind, ahead }
+    const branchCompareDetailsCache = new Map(); // branchName -> { behindCount, aheadCount, behindCommits, aheadCommits }
+
+    function resetCompareState() {
+      comparedBranch = null;
+      compareActiveTab = 'behind';
+      isSelectingCompareBranch = false;
+      compareFilterQuery = '';
+      branchCompareSummaryCache.clear();
+      branchCompareDetailsCache.clear();
+    }
 
     function showScreen(id) {
       document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -1454,7 +1533,11 @@
             updateTopbarUI();
             parent.postMessage({ pluginMessage: { type: 'save-repo', repo: currentRepo, branch: currentBranch } }, '*');
             closeDropdowns();
+            resetCompareState();
             fetchBranches(); // refresh branches
+            if (activeMainTab === 'history') {
+              fetchCommitHistory();
+            }
           };
           list.appendChild(div);
         });
@@ -1534,6 +1617,10 @@
       updateTopbarUI();
       parent.postMessage({ pluginMessage: { type: 'save-repo', repo: currentRepo, branch: currentBranch } }, '*'); // Persist
       closeDropdowns();
+      resetCompareState();
+      if (activeMainTab === 'history') {
+        fetchCommitHistory();
+      }
     }
 
     // Filter listeners
@@ -1554,7 +1641,7 @@
 
     // Fetch Branches API
     async function fetchBranches() {
-      if (!currentRepo || !currentPat) return;
+      if (!currentRepo || !currentPat) return [];
       hasFetchedBranches = false;
       try {
         const res = await fetch(`https://api.github.com/repos/${currentRepo}/branches`, {
@@ -1575,6 +1662,7 @@
         hasFetchedBranches = true;
         if (activeDropdown === 'branch-dropdown') renderBranchDropdown(document.getElementById('branch-filter').value);
       }
+      return cachedBranches;
     }
 
     // Modal Logic
@@ -2448,18 +2536,398 @@
       return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
+    // Create commit history list item (reused for normal history and compare lists)
+    function createCommitListItem(commit, autoSelect = false) {
+      const date = new Date(commit.commit.author.date);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+      
+      let relativeTime;
+      if (diffMins < 1) relativeTime = 'just now';
+      else if (diffMins < 60) relativeTime = `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+      else if (diffHours < 24) relativeTime = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+      else if (diffDays < 30) relativeTime = `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+      else relativeTime = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+      const message = commit.commit.message.split('\n')[0];
+      const authorName = commit.commit.author.name || '?';
+      const author = authorName.toUpperCase();
+      const shortSha = commit.sha.substring(0, 7);
+
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      item.innerHTML = `
+        <div class="history-item-row">
+          <div style="flex: 1; min-width: 0;">
+            <div class="history-item-title" title="${escapeHtml(message)}">${escapeHtml(message)}</div>
+            <div class="history-item-meta" style="margin-top: 4px;">
+              <span style="font-weight: 500;">${escapeHtml(author)}</span>
+              <span style="color: #555;">·</span>
+              <span>${relativeTime}</span>
+            </div>
+          </div>
+          <button class="btn-item-import" title="Import this version beside current canvas without removing anything">Import</button>
+        </div>
+      `;
+
+      const importBtn = item.querySelector('.btn-item-import');
+      if (importBtn) {
+        importBtn.onclick = (e) => {
+          e.stopPropagation();
+          importCommitToCanvas(commit, importBtn);
+        };
+      }
+
+      item.onclick = () => {
+        document.querySelectorAll('.history-item').forEach(i => i.classList.remove('selected'));
+        item.classList.add('selected');
+        selectHistoryCommit(commit);
+      };
+
+      if (autoSelect) {
+        item.classList.add('selected');
+        selectHistoryCommit(commit);
+      }
+
+      return item;
+    }
+
+    // Render branch compare top header bar (GitHub Desktop style)
+    function renderCompareHeader() {
+      const container = document.getElementById('history-compare-container');
+      if (!container) return;
+
+      const otherBranches = (cachedBranches || []).filter(b => b.name !== currentBranch);
+
+      if (comparedBranch) {
+        const details = branchCompareDetailsCache.get(comparedBranch) || { behindCount: 0, aheadCount: 0 };
+        container.innerHTML = `
+          <div style="padding: 8px 12px; border-bottom: 1px solid #21262d; display: flex; flex-direction: column; gap: 8px; background: #161b22;">
+            <div style="display: flex; align-items: center; justify-content: space-between; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 5px 10px;">
+              <div style="display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden;">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="#8b949e" style="flex-shrink: 0;"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+                <span style="color: #c9d1d9; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(comparedBranch)}</span>
+              </div>
+              <button id="btn-close-compare" title="Clear comparison" style="background: transparent; border: none; color: #8b949e; cursor: pointer; padding: 2px 4px; font-size: 13px; border-radius: 4px; display: flex; align-items: center; justify-content: center; line-height: 1;">✕</button>
+            </div>
+            <div style="display: flex; width: 100%; border-radius: 6px; overflow: hidden; border: 1px solid #30363d; background: #0d1117;">
+              <button id="btn-compare-tab-behind" class="compare-tab-btn ${compareActiveTab === 'behind' ? 'active' : ''}">
+                Behind (${details.behindCount})
+              </button>
+              <button id="btn-compare-tab-ahead" class="compare-tab-btn ${compareActiveTab === 'ahead' ? 'active' : ''}" style="border-left: 1px solid #30363d;">
+                Ahead (${details.aheadCount})
+              </button>
+            </div>
+          </div>
+        `;
+
+        const closeBtn = document.getElementById('btn-close-compare');
+        if (closeBtn) {
+          closeBtn.onclick = () => {
+            comparedBranch = null;
+            isSelectingCompareBranch = false;
+            fetchCommitHistory();
+          };
+        }
+
+        const behindBtn = document.getElementById('btn-compare-tab-behind');
+        if (behindBtn) {
+          behindBtn.onclick = () => {
+            if (compareActiveTab !== 'behind') {
+              compareActiveTab = 'behind';
+              renderCompareHeader();
+              renderComparedCommits();
+            }
+          };
+        }
+
+        const aheadBtn = document.getElementById('btn-compare-tab-ahead');
+        if (aheadBtn) {
+          aheadBtn.onclick = () => {
+            if (compareActiveTab !== 'ahead') {
+              compareActiveTab = 'ahead';
+              renderCompareHeader();
+              renderComparedCommits();
+            }
+          };
+        }
+        return;
+      }
+
+      if (isSelectingCompareBranch) {
+        container.innerHTML = `
+          <div style="padding: 8px 12px; border-bottom: 1px solid #21262d; background: #161b22;">
+            <div style="display: flex; align-items: center; background: #0d1117; border: 1px solid #1f6feb; border-radius: 6px; padding: 4px 8px; gap: 8px; box-shadow: 0 0 0 2px rgba(31, 111, 235, 0.25);">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="#8b949e" style="flex-shrink: 0;"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+              <input id="compare-branch-filter" type="text" placeholder="Select Branch to Compare..." value="${escapeHtml(compareFilterQuery)}" style="flex: 1; min-width: 0; background: transparent; border: none; outline: none; color: #e6edf3; font-size: 12px; padding: 2px 0;" />
+              <button id="btn-cancel-compare-search" title="Cancel" style="background: transparent; border: none; color: #8b949e; cursor: pointer; padding: 2px 4px; font-size: 13px; line-height: 1; border-radius: 4px; display: flex; align-items: center; justify-content: center;">✕</button>
+            </div>
+          </div>
+        `;
+
+        const filterInput = document.getElementById('compare-branch-filter');
+        if (filterInput) {
+          filterInput.focus();
+          filterInput.addEventListener('input', (e) => {
+            compareFilterQuery = e.target.value;
+            renderOtherBranchesList(compareFilterQuery);
+          });
+          filterInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+              isSelectingCompareBranch = false;
+              compareFilterQuery = '';
+              fetchCommitHistory();
+            }
+          });
+        }
+
+        const cancelBtn = document.getElementById('btn-cancel-compare-search');
+        if (cancelBtn) {
+          cancelBtn.onclick = () => {
+            isSelectingCompareBranch = false;
+            compareFilterQuery = '';
+            fetchCommitHistory();
+          };
+        }
+        return;
+      }
+
+      // Normal mode (not comparing, not picking)
+      if (otherBranches.length === 0) {
+        container.innerHTML = `
+          <div style="padding: 8px 12px; border-bottom: 1px solid #1E1E1E;">
+            <button class="compare-header-btn" disabled>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+              No Branches to Compare
+            </button>
+          </div>
+        `;
+      } else {
+        container.innerHTML = `
+          <div style="padding: 8px 12px; border-bottom: 1px solid #1E1E1E;">
+            <button id="btn-start-compare" class="compare-header-btn">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+              Select Branch to Compare...
+            </button>
+          </div>
+        `;
+
+        const startBtn = document.getElementById('btn-start-compare');
+        if (startBtn) {
+          startBtn.onclick = () => {
+            isSelectingCompareBranch = true;
+            compareFilterQuery = '';
+            renderCompareHeader();
+            renderOtherBranchesList('');
+          };
+        }
+      }
+    }
+
+    // Render "Other Branches" picker list (matching GitHub Desktop Image 2)
+    function renderOtherBranchesList(filterText = '') {
+      const list = document.getElementById('history-list');
+      if (!list) return;
+
+      const otherBranches = (cachedBranches || [])
+        .filter(b => b.name !== currentBranch)
+        .filter(b => !filterText || b.name.toLowerCase().includes(filterText.toLowerCase()));
+
+      list.innerHTML = '';
+
+      if (otherBranches.length === 0) {
+        list.innerHTML = `<div style="padding: 32px 16px; text-align: center; color: #8b949e; font-size: 13px;">No other branches found matching "${escapeHtml(filterText)}"</div>`;
+        return;
+      }
+
+      const container = document.createElement('div');
+      container.style.cssText = 'padding: 4px 0;';
+      container.innerHTML = `<div style="padding: 8px 14px 4px 14px; font-size: 13px; font-weight: 700; color: #f0f6fc;">Other Branches</div>`;
+
+      otherBranches.forEach(b => {
+        const row = document.createElement('div');
+        row.className = 'compare-branch-row';
+        row.innerHTML = `
+          <div style="display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden;">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="#8b949e" style="flex-shrink: 0;"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
+            <span style="color: #c9d1d9; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(b.name)}</span>
+          </div>
+          <div class="compare-branch-badge" style="color: #8b949e; font-size: 12px; font-weight: 500; white-space: nowrap; margin-left: 12px; flex-shrink: 0;">
+            ...
+          </div>
+        `;
+
+        row.onclick = () => {
+          selectComparedBranch(b.name);
+        };
+
+        container.appendChild(row);
+
+        const badgeEl = row.querySelector('.compare-branch-badge');
+        updateBranchRowCounts(b.name, badgeEl);
+      });
+
+      list.appendChild(container);
+    }
+
+    // Asynchronously fetch and display 0↓ 0↑ counts on branch rows
+    async function updateBranchRowCounts(branchName, badgeEl) {
+      if (branchCompareSummaryCache.has(branchName)) {
+        const s = branchCompareSummaryCache.get(branchName);
+        if (badgeEl) badgeEl.innerHTML = `<span>${s.behind}↓</span> <span style="margin-left: 4px;">${s.ahead}↑</span>`;
+        return;
+      }
+      try {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/compare/${encodeURIComponent(currentBranch)}...${encodeURIComponent(branchName)}`, {
+          headers: {
+            'Authorization': `Bearer ${currentPat}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const s = {
+            behind: data.ahead_by || 0,
+            ahead: data.behind_by || 0
+          };
+          branchCompareSummaryCache.set(branchName, s);
+          if (badgeEl) badgeEl.innerHTML = `<span>${s.behind}↓</span> <span style="margin-left: 4px;">${s.ahead}↑</span>`;
+        } else {
+          if (badgeEl) badgeEl.innerHTML = `<span>0↓</span> <span style="margin-left: 4px;">0↑</span>`;
+        }
+      } catch (err) {
+        if (badgeEl) badgeEl.innerHTML = `<span>0↓</span> <span style="margin-left: 4px;">0↑</span>`;
+      }
+    }
+
+    // Select a branch to compare
+    function selectComparedBranch(branchName) {
+      comparedBranch = branchName;
+      isSelectingCompareBranch = false;
+      compareActiveTab = 'behind';
+      renderCompareHeader();
+      loadAndRenderComparison(branchName);
+    }
+
+    // Load comparison data from GitHub API and render
+    async function loadAndRenderComparison(branchName) {
+      const list = document.getElementById('history-list');
+      list.innerHTML = `<div style="padding: 32px 16px; text-align: center; color: #8b949e; font-size: 13px;">Comparing <strong>${escapeHtml(currentBranch)}</strong> with <strong>${escapeHtml(branchName)}</strong>...</div>`;
+
+      try {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/compare/${encodeURIComponent(currentBranch)}...${encodeURIComponent(branchName)}`, {
+          headers: {
+            'Authorization': `Bearer ${currentPat}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+
+        if (!res.ok) {
+          const e = await res.json().catch(() => ({}));
+          list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">${escapeHtml(e.message || 'Failed to compare branches.')}</div>`;
+          return;
+        }
+
+        const data = await res.json();
+        const behindCount = data.ahead_by || 0;
+        const aheadCount = data.behind_by || 0;
+        const behindCommits = data.commits || [];
+        let aheadCommits = [];
+
+        if (aheadCount > 0) {
+          const aheadRes = await fetch(`https://api.github.com/repos/${currentRepo}/compare/${encodeURIComponent(branchName)}...${encodeURIComponent(currentBranch)}`, {
+            headers: {
+              'Authorization': `Bearer ${currentPat}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          });
+          if (aheadRes.ok) {
+            const aheadData = await aheadRes.json();
+            aheadCommits = aheadData.commits || [];
+          }
+        }
+
+        branchCompareDetailsCache.set(branchName, {
+          behindCount,
+          aheadCount,
+          behindCommits,
+          aheadCommits
+        });
+
+        renderCompareHeader();
+        renderComparedCommits();
+      } catch (err) {
+        list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">Network error: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    // Render comparison commits or empty state (matching GitHub Desktop Image 3)
+    function renderComparedCommits() {
+      const list = document.getElementById('history-list');
+      list.innerHTML = '';
+
+      const details = branchCompareDetailsCache.get(comparedBranch);
+      if (!details) return;
+
+      const isBehind = compareActiveTab === 'behind';
+      const commits = isBehind ? details.behindCommits : details.aheadCommits;
+
+      if (!commits || commits.length === 0) {
+        list.innerHTML = `
+          <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; min-height: 240px; padding: 32px 20px; text-align: center; color: #8b949e;">
+            <div style="font-size: 13px; line-height: 1.5; margin-bottom: 8px;">
+              ${isBehind ? 'Your branch is up to date with the compared branch' : 'No commits ahead of the compared branch'}
+            </div>
+            <div style="display: inline-block; background: #21262d; border: 1px solid #30363d; border-radius: 6px; padding: 4px 10px; font-family: monospace; font-size: 12px; color: #c9d1d9;">
+              (${escapeHtml(comparedBranch)})
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      commits.forEach((commit, idx) => {
+        const item = createCommitListItem(commit, idx === 0);
+        list.appendChild(item);
+      });
+    }
+
     // Fetch and render commit history
     async function fetchCommitHistory() {
       const list = document.getElementById('history-list');
-      list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">Loading commit history...</div>';
       
       if (!currentRepo || !currentPat) {
         list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">No repository connected.</div>';
         return;
       }
-      
+
+      // Ensure branches are fetched so we know if other branches exist
+      if (!hasFetchedBranches || cachedBranches.length === 0) {
+        await fetchBranches();
+      }
+
+      // If already in a compare state, resume that view
+      if (comparedBranch) {
+        renderCompareHeader();
+        loadAndRenderComparison(comparedBranch);
+        return;
+      }
+
+      if (isSelectingCompareBranch) {
+        renderCompareHeader();
+        renderOtherBranchesList(compareFilterQuery);
+        return;
+      }
+
+      renderCompareHeader();
+
+      list.innerHTML = '<div style="padding: 24px 16px; text-align: center; color: #8b949e; font-size: 13px;">Loading commit history...</div>';
+
       try {
-        const res = await fetch(`https://api.github.com/repos/${currentRepo}/commits?sha=${currentBranch}&per_page=50`, {
+        const res = await fetch(`https://api.github.com/repos/${currentRepo}/commits?sha=${encodeURIComponent(currentBranch)}&per_page=50`, {
           headers: {
             'Authorization': `Bearer ${currentPat}`,
             'Accept': 'application/vnd.github.v3+json'
@@ -2486,76 +2954,13 @@
         
         list.innerHTML = '';
 
-        // "No Branches to Compare" button at top
-        const compareBtn = document.createElement('div');
-        compareBtn.style.cssText = 'padding: 8px 12px; border-bottom: 1px solid #1E1E1E;';
-        compareBtn.innerHTML = `
-          <button style="width: 100%; background: transparent; border: 1px solid #444; border-radius: 4px; color: #8b949e; padding: 5px 10px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; justify-content: center;">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M11.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122V6A2.5 2.5 0 0110 8.5H6a1 1 0 00-1 1v1.128a2.251 2.251 0 11-1.5 0V5.372a2.25 2.25 0 111.5 0v1.836A2.492 2.492 0 016 7h4a1 1 0 001-1v-.628A2.25 2.25 0 019.5 3.25zM4.25 12a.75.75 0 100 1.5.75.75 0 000-1.5zM3.5 3.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0z"/></svg>
-            No Branches to Compare
-          </button>
-        `;
-        list.appendChild(compareBtn);
-
         commits.forEach((commit, idx) => {
-          const date = new Date(commit.commit.author.date);
-          const now = new Date();
-          const diffMs = now - date;
-          const diffMins = Math.floor(diffMs / 60000);
-          const diffHours = Math.floor(diffMs / 3600000);
-          const diffDays = Math.floor(diffMs / 86400000);
-          
-          let relativeTime;
-          if (diffMins < 1) relativeTime = 'just now';
-          else if (diffMins < 60) relativeTime = `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
-          else if (diffHours < 24) relativeTime = `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
-          else if (diffDays < 30) relativeTime = `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
-          else relativeTime = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-          const message = commit.commit.message.split('\n')[0];
-          const authorName = commit.commit.author.name || '?';
-          const author = authorName.toUpperCase();
-          const shortSha = commit.sha.substring(0, 7);
-
-          const item = document.createElement('div');
-          item.className = 'history-item';
-          item.innerHTML = `
-            <div class="history-item-row">
-              <div style="flex: 1; min-width: 0;">
-                <div class="history-item-title" title="${escapeHtml(message)}">${escapeHtml(message)}</div>
-                <div class="history-item-meta" style="margin-top: 4px;">
-                  <span style="font-weight: 500;">${escapeHtml(author)}</span>
-                  <span style="color: #555;">·</span>
-                  <span>${relativeTime}</span>
-                </div>
-              </div>
-              <button class="btn-item-import" title="Import this version beside current canvas without removing anything">Import</button>
-            </div>
-          `;
-
-          const importBtn = item.querySelector('.btn-item-import');
-          importBtn.onclick = (e) => {
-            e.stopPropagation();
-            importCommitToCanvas(commit, importBtn);
-          };
-
-          item.onclick = () => {
-            document.querySelectorAll('.history-item').forEach(i => i.classList.remove('selected'));
-            item.classList.add('selected');
-            selectHistoryCommit(commit);
-          };
-
+          const item = createCommitListItem(commit, idx === 0);
           list.appendChild(item);
-
-          // Auto-select first commit
-          if (idx === 0) {
-            item.classList.add('selected');
-            selectHistoryCommit(commit);
-          }
         });
         
       } catch (e) {
-        list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">Network error: ${e.message}</div>`;
+        list.innerHTML = `<div style="padding: 24px 16px; text-align: center; color: #f85149; font-size: 13px;">Network error: ${escapeHtml(e.message)}</div>`;
       }
     }
 
@@ -2720,7 +3125,11 @@
           updateTopbarUI();
           parent.postMessage({ pluginMessage: { type: 'save-repo', repo: currentRepo, branch: currentBranch } }, '*');
           closeModal('modal-create-branch');
+          resetCompareState();
           fetchBranches(); // refresh
+          if (activeMainTab === 'history') {
+            fetchCommitHistory();
+          }
         } else {
           const e = await res.json();
           throw new Error(e.message || 'Error creating branch');
@@ -3114,8 +3523,9 @@
                 updateCommitBtn();
               }
             }, 2500);
-          }
           // Refresh branches and commit history after commit
+          branchCompareSummaryCache.clear();
+          branchCompareDetailsCache.clear();
           fetchBranches();
           fetchCommitHistory();
           // Refresh diff preview after commit
