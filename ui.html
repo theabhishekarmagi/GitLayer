@@ -1334,7 +1334,7 @@
         if (blobRes.ok) {
           const blobData = await blobRes.json();
           if (blobData && blobData.content) {
-            const jsonStr = decodeBase64Utf8(blobData.content);
+            const jsonStr = blobData.encoding === 'base64' ? decodeBase64Utf8(blobData.content) : blobData.content;
             return JSON.parse(jsonStr);
           }
         }
@@ -2849,12 +2849,12 @@
 
           // Step 1: Upload snapshot blob via Git Data Blobs API (supports up to 100MB)
           status.innerText = 'Uploading snapshot blob...';
-          const contentBase64 = encodeBase64Utf8(JSON.stringify(payload));
+          const jsonString = JSON.stringify(payload);
           let blobRes = await ghRequest('/git/blobs', {
             method: 'POST',
             body: JSON.stringify({
-              content: contentBase64,
-              encoding: 'base64'
+              content: jsonString,
+              encoding: 'utf-8'
             })
           });
 
@@ -2879,8 +2879,8 @@
             blobRes = await ghRequest('/git/blobs', {
               method: 'POST',
               body: JSON.stringify({
-                content: contentBase64,
-                encoding: 'base64'
+                content: jsonString,
+                encoding: 'utf-8'
               })
             });
           }
@@ -2896,12 +2896,11 @@
           let svgBlobSha = null;
           if (nativeSvg) {
             try {
-              const svgBase64 = encodeBase64Utf8(nativeSvg);
               const svgRes = await ghRequest('/git/blobs', {
                 method: 'POST',
                 body: JSON.stringify({
-                  content: svgBase64,
-                  encoding: 'base64'
+                  content: nativeSvg,
+                  encoding: 'utf-8'
                 })
               });
               if (svgRes.ok) {

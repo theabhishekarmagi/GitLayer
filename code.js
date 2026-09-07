@@ -6,6 +6,8 @@ if (figma.editorType === 'figma') {
     // ─────────────────────────────────────────────────────────────────────────────
     // SERIALIZER — Captures full node hierarchy & styling directly from Figma canvas
     // ─────────────────────────────────────────────────────────────────────────────
+    let activeSharedImages = null;
+    let activeDocImages = null;
     async function serializeNode(node) {
         const data = {
             id: node.id,
@@ -37,23 +39,27 @@ if (figma.editorType === 'figma') {
                     });
                 }
                 else if (fill.type === 'IMAGE' && fill.imageHash) {
-                    let imageBase64 = undefined;
-                    try {
-                        const img = figma.getImageByHash(fill.imageHash);
-                        if (img) {
-                            const bytes = await img.getBytesAsync();
-                            if (bytes && bytes.length > 0) {
-                                imageBase64 = figma.base64Encode(bytes);
+                    const hash = fill.imageHash;
+                    if (activeSharedImages && !activeSharedImages.has(hash)) {
+                        try {
+                            const img = figma.getImageByHash(hash);
+                            if (img) {
+                                const bytes = await img.getBytesAsync();
+                                if (bytes && bytes.length > 0) {
+                                    // Cap individual embedded image size to 2MB to prevent bloated snapshots
+                                    if (bytes.length <= 2000000) {
+                                        activeSharedImages.set(hash, figma.base64Encode(bytes));
+                                    }
+                                }
                             }
                         }
-                    }
-                    catch (imgErr) {
-                        console.warn('[GitLayer] Could not extract image bytes', imgErr);
+                        catch (imgErr) {
+                            console.warn('[GitLayer] Could not extract image bytes', imgErr);
+                        }
                     }
                     serializedFills.push({
                         type: 'IMAGE',
-                        imageHash: fill.imageHash,
-                        imageBase64: imageBase64,
+                        imageHash: hash,
                         scaleMode: fill.scaleMode,
                         opacity: fill.opacity ?? 1,
                         visible: fill.visible ?? true
@@ -278,9 +284,17 @@ if (figma.editorType === 'figma') {
                 realChildren = previewContainer.children.filter(c => c.visible !== false && c.type !== 'SLICE');
             }
         }
+        activeSharedImages = new Map();
         const serializedChildren = [];
         for (const child of realChildren) {
             serializedChildren.push(await serializeNode(child));
+        }
+        const imagesObj = {};
+        if (activeSharedImages) {
+            activeSharedImages.forEach((val, key) => {
+                imagesObj[key] = val;
+            });
+            activeSharedImages = null;
         }
         return {
             document: {
@@ -293,6 +307,7 @@ if (figma.editorType === 'figma') {
                     }
                 ]
             },
+            images: imagesObj,
             version: '2.0.0',
             timestamp: new Date().toISOString()
         };
@@ -525,9 +540,10 @@ if (figma.editorType === 'figma') {
                     else if (fill.type === 'IMAGE') {
                         try {
                             let imageObj = null;
-                            if (fill.imageBase64) {
+                            const base64 = fill.imageBase64 || (activeDocImages && fill.imageHash ? activeDocImages[fill.imageHash] : null);
+                            if (base64) {
                                 try {
-                                    const bytes = figma.base64Decode(fill.imageBase64);
+                                    const bytes = figma.base64Decode(base64);
                                     imageObj = figma.createImage(bytes);
                                 }
                                 catch (decodeErr) {
@@ -1069,6 +1085,7 @@ if (figma.editorType === 'figma') {
         }
     }
     async function deserializeDocument(doc) {
+        activeDocImages = doc?.images || null;
         if (doc.pageName && doc.nodes) {
             figma.ui.postMessage({
                 type: 'pull-error',
@@ -1082,34 +1099,37 @@ if (figma.editorType === 'figma') {
             return;
         }
         isImportingOrPulling = true;
+        suppressDocumentChangeUntil = Date.now() + 5000;
         try {
-            const currentPage = figma.currentPage;
-            currentPage.name = pages[0].name ?? currentPage.name;
-            // Remove existing nodes on canvas
-            for (const child of [...currentPage.children])
-                child.remove();
-            const topNodes = pages[0].children ?? [];
-            let restored = 0;
-            for (const nodeData of topNodes) {
-                await buildNode(nodeData, currentPage);
-                restored++;
-                figma.ui.postMessage({
-                    type: 'pull-progress',
-                    message: `Restored ${restored}/${topNodes.length} nodes...`
-                });
+            const page = figma.currentPage;
+            if (doc.pageName && doc.pageName !== page.name) {
+                page.name = doc.pageName;
             }
-            if (currentPage.children.length > 0) {
-                figma.viewport.scrollAndZoomIntoView(currentPage.children);
+            // Remove existing user content before restoring
+            const toRemove = page.children.filter(c => !c.name.startsWith('__gitlayer_'));
+            for (const c of toRemove) {
+                c.remove();
             }
-            figma.ui.postMessage({ type: 'pull-success', count: restored });
+            const rootNodes = pages[0]?.children ?? [];
+            for (const nodeData of rootNodes) {
+                await buildNode(nodeData, page);
+            }
+            figma.notify(`Successfully synced "${page.name}" from GitHub.`);
+            figma.ui.postMessage({ type: 'pull-success' });
+        }
+        catch (err) {
+            console.error('[GitLayer] Deserialization error', err);
+            figma.ui.postMessage({ type: 'pull-error', message: err?.message ?? 'Failed to reconstruct design.' });
         }
         finally {
             isImportingOrPulling = false;
+            activeDocImages = null;
             suppressDocumentChangeUntil = Date.now() + 1000;
             await sendPreview();
         }
     }
     async function importCommitBesideCurrent(doc, commitInfo, isPreview = false) {
+        activeDocImages = doc?.images || null;
         if (doc.pageName && doc.nodes) {
             figma.ui.postMessage({
                 type: 'import-error',
@@ -1256,6 +1276,7 @@ if (figma.editorType === 'figma') {
         }
         finally {
             isImportingOrPulling = false;
+            activeDocImages = null;
             suppressDocumentChangeUntil = Date.now() + 1000;
             await sendPreview();
         }
@@ -1290,6 +1311,7 @@ if (figma.editorType === 'figma') {
         if (topNodes.length === 0)
             return { dataUrl: null, pdfBase64: null };
         isRenderingCommitImage = true;
+        activeDocImages = doc?.images || null;
         let tempFrame = null;
         try {
             // Clean up any stale temp render frames first
@@ -1380,6 +1402,7 @@ if (figma.editorType === 'figma') {
                 catch { }
             }
             suppressDocumentChangeUntil = Date.now() + 2500;
+            activeDocImages = null;
             isRenderingCommitImage = false;
         }
     }
@@ -1505,19 +1528,6 @@ if (figma.editorType === 'figma') {
         }
         else if (msg.type === 'serialize-and-commit') {
             const payload = await serializeCurrentPage();
-            const { pdfBase64, dataUrl } = await exportActiveCanvasArtifacts();
-            if (pdfBase64) {
-                payload.previewPdf = pdfBase64;
-            }
-            if (dataUrl) {
-                payload.previewImage = dataUrl;
-            }
-            if (!pdfBase64) {
-                const thumbnails = await generateVisualPreview();
-                if (thumbnails) {
-                    payload.thumbnails = thumbnails;
-                }
-            }
             let nativeSvg = null;
             try {
                 const validChildren = figma.currentPage.children.filter(c => c.visible !== false && c.type !== 'SLICE' && !c.name.startsWith('__gitlayer_'));
