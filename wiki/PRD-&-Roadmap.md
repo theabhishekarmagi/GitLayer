@@ -52,13 +52,14 @@ GitLayer is designed to bridge the fundamental divide between design workflows a
 ```mermaid
 gantt
     title GitLayer Phased Development Roadmap
-    dateFormat  YYYY-MM
+    dateFormat  YYYY-MM-DD
+    axisFormat  %b %Y
     section Core Development
-    V0: Proof of Concept          :done,    des1, 2026-07, 2026-08
-    V1: Current MVP (GitHub)       :active,  des2, 2026-08, 2026-09
+    V0 Proof of Concept          :done,    des1, 2026-07-01, 2026-08-31
+    V1 Current MVP (GitHub)       :active,  des2, 2026-08-01, 2026-09-30
     section Upcoming Releases
-    V1.1: Multi-Provider & Merge   :         des3, 2026-10, 2026-11
-    V2: Enterprise & Multiplayer   :         des4, 2026-11, 2027-01
+    V1.1 Multi-Provider and Merge :         des3, 2026-10-01, 2026-11-30
+    V2 Enterprise and Multiplayer :         des4, 2026-11-01, 2027-01-31
 ```
 
 ### V0 — Proof of Concept (Completed)
