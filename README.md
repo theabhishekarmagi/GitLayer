@@ -61,7 +61,6 @@ Explore the complete [GitLayer Wiki](https://github.com/theabhishekarmagi/GitLay
 - [Getting Started](./wiki/Getting-Started.md) — Installation, Figma setup, and GitHub PAT configuration.
 - [Architecture & Technical Design](./wiki/Architecture-&-Technical-Design.md) — Figma sandbox vs. UI iframe, node serialization, and GitHub REST API integration.
 - [User Guide & Workflows](./wiki/User-Guide.md) — Dual UI modes, branch creation, Ahead/Behind comparison, and canvas side-by-side previews.
-- [PRD & Roadmap](./wiki/PRD-&-Roadmap.md) — Product requirements, personas, goals, and upcoming releases.
 - [Development & Contributing](./wiki/Development-&-Contributing.md) — TypeScript compilation, debugging in Figma, and pull request workflow.
 - [Troubleshooting & FAQ](./wiki/Troubleshooting-&-FAQ.md) — Authentication errors, image limits, and font fallbacks.
 

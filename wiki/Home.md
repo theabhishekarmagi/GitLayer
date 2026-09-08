@@ -43,7 +43,6 @@ Explore the complete GitLayer documentation through the following guides:
 | **[[Getting Started|Getting-Started]]** | Prerequisites, installing via Figma manifest, setting up your GitHub Personal Access Token, and making your first commit. |
 | **[[Architecture & Technical Design|Architecture-&-Technical-Design]]** | Deep dive into the plugin architecture: Figma sandbox (`code.ts`), UI iframe (`ui.html`), message passing, node serialization, and GitHub REST API integration. |
 | **[[User Guide & Workflows|User-Guide]]** | How to use the Dual UI modes, branch creation, branch switching, commit inspections, and side-by-side canvas previews. |
-| **[[PRD & Product Roadmap|PRD-&-Roadmap]]** | Full Product Requirements Document: problem statement, user personas, success metrics, and phased roadmap (GitLab/Bitbucket support, visual merge conflict resolution). |
 | **[[Development & Contributing|Development-&-Contributing]]** | Setting up a local development environment, compiling TypeScript, running ESLint, and contributing to the GitLayer codebase. |
 | **[[Troubleshooting & FAQ|Troubleshooting-&-FAQ]]** | Resolving PAT authentication issues, image size limitations, missing font warnings, and Figma plugin reload shortcuts. |
 

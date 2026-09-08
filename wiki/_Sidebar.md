@@ -6,7 +6,6 @@
 - **[[Getting Started|Getting-Started]]**
 - **[[Architecture & Technical Design|Architecture-&-Technical-Design]]**
 - **[[User Guide & Workflows|User-Guide]]**
-- **[[PRD & Roadmap|PRD-&-Roadmap]]**
 - **[[Development Guide|Development-&-Contributing]]**
 - **[[Troubleshooting & FAQ|Troubleshooting-&-FAQ]]**
 

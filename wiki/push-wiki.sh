@@ -46,6 +46,7 @@ git clone "${WIKI_REMOTE}" "${TEMP_DIR}"
 
 # 3. Copy markdown files to the cloned repo
 echo "[3/4] Synchronizing wiki documentation files..."
+rm -f "${TEMP_DIR}"/*.md
 for file in "${WIKI_DIR}"/*.md; do
   if [ -f "${file}" ]; then
     cp "${file}" "${TEMP_DIR}/"
