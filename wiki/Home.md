@@ -64,6 +64,12 @@ Explore the complete GitLayer documentation through the following guides:
 
 ---
 
+## Data & Privacy Disclosure
+
+GitLayer only connects to GitHub and uploads data when you explicitly click the "Commit" or "Push" button — there is no automatic or background syncing. When an export is initiated, the entire current Figma page hierarchy is serialized into a structured JSON snapshot (`figma-snapshot.json`), along with associated SVG/PNG/PDF preview data and embedded assets, and sent directly to the repository you select using your own GitHub Personal Access Token (PAT). GitLayer operates without intermediary servers or third-party telemetry, keeping all design data solely between your Figma client and your GitHub account.
+
+---
+
 ## Quick Links
 
 - **Repository**: [github.com/theabhishekarmagi/GitLayer](https://github.com/theabhishekarmagi/GitLayer)

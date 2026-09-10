@@ -71,3 +71,6 @@ Personal Access Tokens have an allowance of **5,000 requests per hour** on GitHu
 
 ### How do I completely disconnect a repository from a Figma file?
 Click **Sign out** in the top navigation bar of GitLayer. This wipes the locally cached credentials and unbinds the repository and branch keys from the active Figma document.
+
+### What data is exported to GitHub, and when does it happen?
+GitLayer only uploads data to GitHub when you explicitly trigger it by clicking the "Commit" or "Push" button. It never syncs automatically or runs background uploads. When you commit, GitLayer exports the entire current Figma page layout hierarchy as a serialized JSON snapshot (`figma-snapshot.json`), along with associated SVG/PNG/PDF preview data and embedded assets. This data is transmitted directly over HTTPS to the repository you selected using your own GitHub Personal Access Token (PAT). GitLayer does not operate intermediate servers or collect telemetry, ensuring complete data privacy and control.

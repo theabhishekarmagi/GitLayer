@@ -64,5 +64,9 @@ Explore the complete [GitLayer Wiki](https://github.com/theabhishekarmagi/GitLay
 - [Development & Contributing](./wiki/Development-&-Contributing.md) — TypeScript compilation, debugging in Figma, and pull request workflow.
 - [Troubleshooting & FAQ](./wiki/Troubleshooting-&-FAQ.md) — Authentication errors, image limits, and font fallbacks.
 
+## Data & Privacy Disclosure
+
+GitLayer only connects to GitHub and uploads data when you explicitly click the "Commit" or "Push" button — there is no automatic or background syncing. When an export is initiated, the entire current Figma page hierarchy is serialized into a structured JSON snapshot (`figma-snapshot.json`), along with associated SVG/PNG/PDF preview data and embedded assets, and sent directly to the repository you select using your own GitHub Personal Access Token (PAT). GitLayer does not operate external intermediary servers, databases, or third-party telemetry, ensuring you retain full ownership and control over your design data.
+
 ## License
 MIT
